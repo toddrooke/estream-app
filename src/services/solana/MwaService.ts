@@ -180,43 +180,60 @@ export class MwaService {
   /**
    * Sign a message with the wallet.
    * Returns the signature as Uint8Array.
+   * 
+   * NOTE: MWA requires authorization within each transact() session.
+   * We use reauthorize() if we have a cached token, otherwise authorize().
    */
   async signMessage(message: Uint8Array): Promise<SignResult> {
     const result = await transact(async (wallet: Web3MobileWallet) => {
-      // Reauthorize or authorize
-      let authToken = this.cachedAuthToken;
-      let publicKey = this.cachedPublicKey;
-      let base64Address: string | null = null;
-
-      if (!authToken) {
+      let publicKey: PublicKey;
+      let base64Address: string;
+      
+      // Always need to (re)authorize within each transact session
+      if (this.cachedAuthToken) {
+        // Try to reauthorize with cached token (faster, no UI)
+        try {
+          const authResult = await wallet.reauthorize({
+            auth_token: this.cachedAuthToken,
+            identity: this.config.appIdentity!,
+          });
+          
+          const account = authResult.accounts[0];
+          base64Address = (account as any).address || (account as any).publicKey;
+          publicKey = decodeBase64Address(base64Address);
+          
+          this.cachedAuthToken = authResult.auth_token;
+          this.cachedPublicKey = publicKey;
+        } catch (e) {
+          // Reauth failed, fall through to full authorize
+          this.cachedAuthToken = null;
+          this.cachedPublicKey = null;
+          throw e;
+        }
+      } else {
+        // Full authorization (shows UI)
         const authResult = await wallet.authorize({
           cluster: this.getClusterRpcName(),
           identity: this.config.appIdentity!,
         });
-        authToken = authResult.auth_token;
         
-        // MWA returns addresses as Base64
         const account = authResult.accounts[0];
         base64Address = (account as any).address || (account as any).publicKey;
-        publicKey = decodeBase64Address(base64Address!);
+        publicKey = decodeBase64Address(base64Address);
         
-        this.cachedAuthToken = authToken;
+        this.cachedAuthToken = authResult.auth_token;
         this.cachedPublicKey = publicKey;
       }
 
-      // For signMessages, we need the Base64 address, not base58
-      // If we don't have it cached, encode the public key back to base64
-      const addressForSigning = base64Address || Buffer.from(publicKey!.toBytes()).toString('base64');
-
-      // Sign the message
+      // Sign the message using the Base64 address from this session
       const signedMessages = await wallet.signMessages({
-        addresses: [addressForSigning],
+        addresses: [base64Address],
         payloads: [message],
       });
 
       return {
         signature: signedMessages[0],
-        publicKey: publicKey!,
+        publicKey: publicKey,
       };
     });
 

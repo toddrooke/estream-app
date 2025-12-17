@@ -710,8 +710,11 @@ export default function DevTools() {
       });
       log('✗ Attestation failed: ' + e);
     }
+    
+    log('>>> Attestation complete, moving to Test 11');
 
     // Test 11: Biometric Check
+    log('>>> Starting Test 11: Biometric Check');
     const startBiometric = Date.now();
     updateTest('Biometric Check', { status: 'running', message: 'Checking...' });
     try {

@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+lib/
+*.tsbuildinfo
+dist/
+
+# React Native
+.expo/
+.metro/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Android
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.hprof
+
+# iOS
+ios/Pods/
+ios/build/
+*.xcworkspace
+!ios/*.xcworkspace/
+*.xcuserstate
+
+# WASM builds
+*.wasm
+pkg/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test
+coverage/
+.jest/
+
+# Buck
+buck-out/
+\.buckd/
+*.keystore
+!debug.keystore
+
+# Temporary
+tmp/
+temp/
+*.log
+

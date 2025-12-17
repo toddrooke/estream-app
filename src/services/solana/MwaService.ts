@@ -15,8 +15,18 @@ import {
   transact,
   Web3MobileWallet,
 } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
-import { Keypair, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { Buffer } from 'buffer';
+
+/**
+ * Decode a Base64-encoded address to a PublicKey.
+ * MWA returns addresses as Base64, but PublicKey expects bytes or base58.
+ */
+function decodeBase64Address(base64Address: string): PublicKey {
+  const bytes = Buffer.from(base64Address, 'base64');
+  return new PublicKey(bytes);
+}
 
 // App identity for MWA sessions
 const APP_IDENTITY = {
@@ -87,8 +97,14 @@ export class MwaService {
         identity: this.config.appIdentity!,
       });
 
+      // MWA returns addresses as Base64, need to decode to PublicKey
+      const account = authResult.accounts[0];
+      // Account can have 'address' (Base64) or might be a WalletAccount
+      const address = (account as any).address || (account as any).publicKey;
+      const publicKey = decodeBase64Address(address);
+
       return {
-        publicKey: new PublicKey(authResult.accounts[0].publicKey),
+        publicKey,
         authToken: authResult.auth_token,
         walletName: authResult.wallet_uri_base ? 'Seed Vault' : 'Unknown',
         walletUri: authResult.wallet_uri_base || '',
@@ -118,8 +134,13 @@ export class MwaService {
           identity: this.config.appIdentity!,
         });
 
+        // MWA returns addresses as Base64
+        const account = authResult.accounts[0];
+        const address = (account as any).address || (account as any).publicKey;
+        const publicKey = decodeBase64Address(address);
+
         return {
-          publicKey: new PublicKey(authResult.accounts[0].publicKey),
+          publicKey,
           authToken: authResult.auth_token,
           walletName: 'Seed Vault',
           walletUri: authResult.wallet_uri_base || '',
@@ -165,6 +186,7 @@ export class MwaService {
       // Reauthorize or authorize
       let authToken = this.cachedAuthToken;
       let publicKey = this.cachedPublicKey;
+      let base64Address: string | null = null;
 
       if (!authToken) {
         const authResult = await wallet.authorize({
@@ -172,14 +194,23 @@ export class MwaService {
           identity: this.config.appIdentity!,
         });
         authToken = authResult.auth_token;
-        publicKey = new PublicKey(authResult.accounts[0].publicKey);
+        
+        // MWA returns addresses as Base64
+        const account = authResult.accounts[0];
+        base64Address = (account as any).address || (account as any).publicKey;
+        publicKey = decodeBase64Address(base64Address!);
+        
         this.cachedAuthToken = authToken;
         this.cachedPublicKey = publicKey;
       }
 
+      // For signMessages, we need the Base64 address, not base58
+      // If we don't have it cached, encode the public key back to base64
+      const addressForSigning = base64Address || Buffer.from(publicKey!.toBytes()).toString('base64');
+
       // Sign the message
       const signedMessages = await wallet.signMessages({
-        addresses: [publicKey!.toBase58()],
+        addresses: [addressForSigning],
         payloads: [message],
       });
 
@@ -207,7 +238,12 @@ export class MwaService {
           identity: this.config.appIdentity!,
         });
         authToken = authResult.auth_token;
-        publicKey = new PublicKey(authResult.accounts[0].publicKey);
+        
+        // MWA returns addresses as Base64
+        const account = authResult.accounts[0];
+        const address = (account as any).address || (account as any).publicKey;
+        publicKey = decodeBase64Address(address);
+        
         this.cachedAuthToken = authToken;
         this.cachedPublicKey = publicKey;
       }
@@ -241,7 +277,12 @@ export class MwaService {
           identity: this.config.appIdentity!,
         });
         authToken = authResult.auth_token;
-        publicKey = new PublicKey(authResult.accounts[0].publicKey);
+        
+        // MWA returns addresses as Base64
+        const account = authResult.accounts[0];
+        const address = (account as any).address || (account as any).publicKey;
+        publicKey = decodeBase64Address(address);
+        
         this.cachedAuthToken = authToken;
         this.cachedPublicKey = publicKey;
       }

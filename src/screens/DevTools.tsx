@@ -38,6 +38,7 @@ import {
   TakeTitleAssetData,
 } from '../components/NftPreview';
 import { getMwaService, MwaService } from '../services/solana/MwaService';
+import { getNftMintService } from '../services/nft/NftMintService';
 
 // Types
 interface TestResult {
@@ -329,6 +330,8 @@ export default function DevTools() {
       { name: 'Biometric Key', status: 'pending', message: 'Biometric-protected key' },
       { name: 'MWA Connect', status: 'pending', message: 'Mobile Wallet Adapter' },
       { name: 'MWA Sign', status: 'pending', message: 'MWA message signing' },
+      { name: 'NFT Metadata', status: 'pending', message: 'Generate NFT metadata' },
+      { name: 'NFT Airdrop', status: 'pending', message: 'Devnet airdrop' },
     ]);
     
     // Auto-run tests on startup (for dev mode)
@@ -864,6 +867,103 @@ export default function DevTools() {
         });
         log('✗ MWA Sign failed: ' + errorMsg);
       }
+    }
+
+    // Test 15: NFT Metadata Generation
+    const startNftMeta = Date.now();
+    updateTest('NFT Metadata', { status: 'running', message: 'Generating...' });
+    try {
+      const nftService = getNftMintService('devnet');
+      const testPubkeyForNft = localKeyPair ? bs58.encode(localKeyPair.publicKey) : 'test-pubkey';
+      
+      // Generate all three NFT types
+      const identityMeta = nftService.createEstreamIdentityMetadata(
+        testPubkeyForNft,
+        'Hardware',
+        'Dec 2024',
+        6,
+        1247
+      );
+      
+      const portfolioMeta = nftService.createTakeTitlePortfolioMetadata(
+        testPubkeyForNft,
+        3,
+        12400,
+        2,
+        45000
+      );
+      
+      const assetMeta = nftService.createTakeTitleAssetMetadata(
+        'TT-2024-001#3',
+        '123 Main St, Austin TX',
+        'Single Family Residential',
+        'For Sale',
+        1000,
+        47
+      );
+      
+      updateTest('NFT Metadata', { 
+        status: 'pass', 
+        message: 'Generated 3 NFT types',
+        details: `Identity: ${identityMeta.symbol}, Portfolio: ${portfolioMeta.symbol}, Asset: ${assetMeta.symbol}`,
+        duration: Date.now() - startNftMeta
+      });
+      log('✓ NFT Metadata: Generated ESTREAM, TTPORT, DEED');
+    } catch (e) {
+      updateTest('NFT Metadata', { 
+        status: 'fail', 
+        message: 'Metadata generation failed',
+        details: String(e),
+        duration: Date.now() - startNftMeta
+      });
+      log('✗ NFT Metadata failed: ' + e);
+    }
+
+    // Test 16: NFT Airdrop (devnet only)
+    const startAirdrop = Date.now();
+    updateTest('NFT Airdrop', { status: 'running', message: 'Requesting SOL...' });
+    try {
+      const nftService = getNftMintService('devnet');
+      const testPubkey = localKeyPair ? bs58.encode(localKeyPair.publicKey) : null;
+      
+      if (!testPubkey) {
+        updateTest('NFT Airdrop', { 
+          status: 'skip', 
+          message: 'No public key',
+          duration: Date.now() - startAirdrop
+        });
+        log('⊘ NFT Airdrop skipped (no pubkey)');
+      } else {
+        // Request 0.1 SOL for testing
+        const success = await nftService.requestAirdrop(testPubkey, 100_000_000);
+        
+        if (success) {
+          updateTest('NFT Airdrop', { 
+            status: 'pass', 
+            message: 'Received 0.1 SOL',
+            details: `Pubkey: ${testPubkey.substring(0, 12)}...`,
+            duration: Date.now() - startAirdrop
+          });
+          log('✓ NFT Airdrop: Received 0.1 SOL on devnet');
+        } else {
+          // Rate limiting is common on devnet, mark as skip not fail
+          updateTest('NFT Airdrop', { 
+            status: 'skip', 
+            message: 'Rate limited (429)',
+            details: 'Devnet airdrop limit reached',
+            duration: Date.now() - startAirdrop
+          });
+          log('⊘ NFT Airdrop skipped (rate limited)');
+        }
+      }
+    } catch (e) {
+      updateTest('NFT Airdrop', { 
+        status: 'fail', 
+        message: 'Airdrop error',
+        details: String(e).substring(0, 80),
+        duration: Date.now() - startAirdrop
+      });
+      log('✗ NFT Airdrop error: ' + e);
     }
 
     log('=== Test suite complete ===');

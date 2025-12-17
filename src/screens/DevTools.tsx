@@ -29,6 +29,14 @@ import bs58 from 'bs58';
 import ViewShot from 'react-native-view-shot';
 import Share from 'react-native-share';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
+import {
+  EstreamIdentityNft,
+  TakeTitlePortfolioNft,
+  TakeTitleAssetNft,
+  EstreamIdentityData,
+  TakeTitlePortfolioData,
+  TakeTitleAssetData,
+} from '../components/NftPreview';
 
 // Types
 interface TestResult {
@@ -943,6 +951,54 @@ export default function DevTools() {
             )}
           </View>
         </Section>
+        
+        {/* NFT Preview Section */}
+        <Section title="🎨 NFT Preview">
+          <Text style={styles.nftDescription}>
+            Live preview of dynamic NFTs based on test data
+          </Text>
+          
+          {/* eStream Identity NFT */}
+          <Text style={styles.nftLabel}>eStream Identity NFT</Text>
+          <EstreamIdentityNft
+            data={{
+              publicKey: keyPair ? bs58.encode(keyPair.publicKey) : '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
+              trustLevel: deviceInfo?.hasSecureHardware ? 'Hardware' : 'Software',
+              memberSince: 'Dec 2024',
+              activityScore: Math.min(8, tests.filter(t => t.status === 'pass').length),
+              anchorCount: 1247,
+            }}
+          />
+          
+          {/* TakeTitle Portfolio NFT */}
+          <Text style={styles.nftLabel}>TakeTitle Portfolio NFT</Text>
+          <TakeTitlePortfolioNft
+            data={{
+              publicKey: keyPair ? bs58.encode(keyPair.publicKey) : '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
+              assetsOwned: 3,
+              tokenBalance: 12450,
+              activeListings: 2,
+              listedValueUsd: 45000,
+            }}
+          />
+          
+          {/* TakeTitle Asset NFT */}
+          <Text style={styles.nftLabel}>TakeTitle Asset NFT</Text>
+          <TakeTitleAssetNft
+            data={{
+              assetId: 'TT-2024-00123',
+              assetName: '123 Main St, Austin TX',
+              assetType: 'Single Family Residential',
+              listingStatus: 'ForSale',
+              tokensAvailable: 500,
+              tokenPriceUsd: 45,
+              viewerTokens: 150,
+              totalSupply: 1000,
+              provenanceEvents: 47,
+              lastUpdate: '2 hours ago',
+            }}
+          />
+        </Section>
       </ScrollView>
       </ViewShot>
     </SafeAreaView>
@@ -1141,6 +1197,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     marginBottom: 2,
+  },
+  nftDescription: {
+    color: '#888888',
+    fontSize: 12,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  nftLabel: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 16,
+    marginBottom: 8,
   },
 });
 

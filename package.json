@@ -24,9 +24,9 @@
     "bs58": "^5.0.0",
     "react": "18.2.0",
     "react-native": "0.74.2",
-    "react-native-get-random-values": "^2.0.0",
+    "react-native-get-random-values": "^1.11.0",
     "react-native-share": "^10.2.0",
-    "react-native-svg": "^15.3.0",
+    "react-native-svg": "^14.1.0",
     "react-native-view-shot": "^3.8.0",
     "tweetnacl": "^1.0.3"
   },

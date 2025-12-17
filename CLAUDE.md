@@ -117,7 +117,7 @@ estream-app/
 
 ## Core Features
 
-### 1. Key Management
+### 1. Key Management (#42) ✅
 - Generate new Ed25519 keypairs
 - Import/export keys (with warnings)
 - View public key and trust level
@@ -134,7 +134,7 @@ estream-app/
 - Verify estream signatures
 - View estream details and history
 
-### 4. Signed Requests
+### 4. Signed Requests (#42) ✅
 - Generate signed API envelopes
 - Automatic envelope signing for privileged operations
 - Nonce generation and timestamp
@@ -144,22 +144,43 @@ estream-app/
 - Merkle proof verification
 - Hash chain visualization
 
+### 6. Vault Service Implementations (#42) ✅
+
+| Service | Platform | Trust Level | Features |
+|---------|----------|-------------|----------|
+| `SeekerVaultService` | Android (Seeker) | Hardware | Seed Vault, attestation |
+| `KeychainVaultService` | iOS | Hardware* | Secure Enclave |
+| `SoftwareVaultService` | All | Software | Dev/testing only |
+
+*Hardware backing depends on device capabilities
+
 ## Security Patterns
 
-### Vault Integration
+### Vault Integration (#42) ✅
 ```typescript
 // src/services/vault/VaultService.ts
 export interface VaultService {
   isAvailable(): Promise<boolean>;
   getPublicKey(): Promise<Uint8Array>;
+  getPublicKeyBase58(): Promise<string>;
   sign(message: Uint8Array): Promise<Uint8Array>;
   getTrustLevel(): Promise<TrustLevel>;
+  getAttestation?(): Promise<AttestationData | null>;
 }
 
 // Implementations:
-// - SeekerVaultService (Android with Seed Vault)
-// - KeychainVaultService (iOS Secure Enclave)
-// - SoftwareVaultService (Fallback, dev only)
+// - SeekerVaultService (Android with Seed Vault) ✅
+// - KeychainVaultService (iOS Secure Enclave) ✅
+// - SoftwareVaultService (Fallback, dev only) ✅
+
+// Factory function
+export async function getVaultService(): Promise<VaultService>;
+
+// React integration
+export function VaultProvider({ children, nodeUrl }): JSX.Element;
+export function useVault(): VaultContextValue;
+export function useSignedApi(): { api, isLoading, error };
+export function useTrustBadge(): { label, color, icon };
 ```
 
 ### Signed Envelope Generation

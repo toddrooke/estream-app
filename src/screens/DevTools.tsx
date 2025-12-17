@@ -7,9 +7,10 @@
  * - Key generation and display
  * - Signing tests
  * - Attestation verification
+ * - Screenshot capture and export
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -20,10 +21,14 @@ import {
   ActivityIndicator,
   Platform,
   NativeModules,
+  Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as nacl from 'tweetnacl';
 import bs58 from 'bs58';
+import ViewShot from 'react-native-view-shot';
+import Share from 'react-native-share';
+import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 
 // Types
 interface TestResult {
@@ -127,6 +132,85 @@ export default function DevTools() {
   const [isRunning, setIsRunning] = useState(false);
   const [keyPair, setKeyPair] = useState<nacl.SignKeyPair | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Ref for screenshot capture
+  const viewShotRef = useRef<ViewShot>(null);
+
+  // Screenshot and share functions
+  const captureAndSave = useCallback(async () => {
+    if (!viewShotRef.current) return;
+    
+    setIsSaving(true);
+    try {
+      const uri = await viewShotRef.current.capture?.();
+      if (uri) {
+        await CameraRoll.saveAsset(uri, { type: 'photo' });
+        Alert.alert('✅ Saved', 'Screenshot saved to camera roll');
+      }
+    } catch (error) {
+      Alert.alert('Error', `Failed to save screenshot: ${error}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }, []);
+
+  const captureAndShare = useCallback(async () => {
+    if (!viewShotRef.current) return;
+    
+    setIsSaving(true);
+    try {
+      const uri = await viewShotRef.current.capture?.();
+      if (uri) {
+        await Share.open({
+          url: uri,
+          title: 'eStream DevTools Test Results',
+          message: `eStream DevTools - ${tests.filter(t => t.status === 'pass').length}/${tests.length} tests passed`,
+        });
+      }
+    } catch (error) {
+      // User cancelled share - that's fine
+      if ((error as Error).message !== 'User did not share') {
+        Alert.alert('Error', `Failed to share: ${error}`);
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }, [tests]);
+
+  const exportTestReport = useCallback(async () => {
+    const report = {
+      timestamp: new Date().toISOString(),
+      device: deviceInfo,
+      results: tests.map(t => ({
+        name: t.name,
+        status: t.status,
+        message: t.message,
+        details: t.details,
+        duration: t.duration,
+      })),
+      summary: {
+        total: tests.length,
+        passed: tests.filter(t => t.status === 'pass').length,
+        failed: tests.filter(t => t.status === 'fail').length,
+        skipped: tests.filter(t => t.status === 'skip').length,
+      },
+      logs: logs.slice(0, 50),
+    };
+
+    try {
+      await Share.open({
+        title: 'eStream Test Report',
+        message: JSON.stringify(report, null, 2),
+        type: 'application/json',
+        filename: `estream-test-report-${Date.now()}.json`,
+      });
+    } catch (error) {
+      if ((error as Error).message !== 'User did not share') {
+        Alert.alert('Error', `Failed to export: ${error}`);
+      }
+    }
+  }, [deviceInfo, tests, logs]);
 
   // Logging helper
   const log = useCallback((message: string) => {
@@ -651,11 +735,37 @@ export default function DevTools() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <ViewShot ref={viewShotRef} options={{ format: 'png', quality: 1 }} style={styles.viewShot}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>🔧 eStream DevTools</Text>
           <Text style={styles.subtitle}>Self-Verification Panel</Text>
+          
+          {/* Screenshot/Export Buttons */}
+          <View style={styles.exportButtons}>
+            <TouchableOpacity
+              style={styles.exportButton}
+              onPress={captureAndSave}
+              disabled={isSaving}
+            >
+              <Text style={styles.exportButtonText}>📸 Save</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.exportButton}
+              onPress={captureAndShare}
+              disabled={isSaving}
+            >
+              <Text style={styles.exportButtonText}>📤 Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.exportButton}
+              onPress={exportTestReport}
+              disabled={isSaving}
+            >
+              <Text style={styles.exportButtonText}>📋 Export</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Device Info */}
@@ -749,6 +859,7 @@ export default function DevTools() {
           </View>
         </Section>
       </ScrollView>
+      </ViewShot>
     </SafeAreaView>
   );
 }
@@ -777,6 +888,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888888',
     marginTop: 4,
+  },
+  viewShot: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+  },
+  exportButtons: {
+    flexDirection: 'row',
+    marginTop: 12,
+    gap: 8,
+  },
+  exportButton: {
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  exportButtonText: {
+    color: '#888888',
+    fontSize: 12,
   },
   section: {
     marginBottom: 24,

@@ -37,6 +37,7 @@ import {
   TakeTitlePortfolioData,
   TakeTitleAssetData,
 } from '../components/NftPreview';
+import { getMwaService, MwaService } from '../services/solana/MwaService';
 
 // Types
 interface TestResult {
@@ -326,6 +327,8 @@ export default function DevTools() {
       { name: 'Attestation', status: 'pending', message: 'Device attestation' },
       { name: 'Biometric Check', status: 'pending', message: 'Biometric availability' },
       { name: 'Biometric Key', status: 'pending', message: 'Biometric-protected key' },
+      { name: 'MWA Connect', status: 'pending', message: 'Mobile Wallet Adapter' },
+      { name: 'MWA Sign', status: 'pending', message: 'MWA message signing' },
     ]);
     
     // Auto-run tests on startup (for dev mode)
@@ -778,6 +781,86 @@ export default function DevTools() {
         duration: Date.now() - startBioKey
       });
       log('✗ Biometric key failed: ' + e);
+    }
+
+    // Test 13: MWA Connect (Mobile Wallet Adapter - Official SDK)
+    const startMwaConnect = Date.now();
+    updateTest('MWA Connect', { status: 'running', message: 'Connecting...' });
+    try {
+      const mwa = getMwaService({ cluster: 'devnet' });
+      const authResult = await mwa.authorize();
+      
+      updateTest('MWA Connect', { 
+        status: 'pass', 
+        message: 'Connected to Seed Vault!',
+        details: `Wallet: ${authResult.walletName}, Key: ${authResult.publicKey.toBase58().substring(0, 12)}...`,
+        duration: Date.now() - startMwaConnect
+      });
+      log('✓ MWA Connected: ' + authResult.publicKey.toBase58().substring(0, 12) + '...');
+    } catch (e) {
+      const errorMsg = String(e);
+      // Check if it's a user cancellation
+      if (errorMsg.includes('cancelled') || errorMsg.includes('rejected')) {
+        updateTest('MWA Connect', { 
+          status: 'skip', 
+          message: 'User cancelled',
+          duration: Date.now() - startMwaConnect
+        });
+        log('⊘ MWA connection cancelled by user');
+      } else {
+        updateTest('MWA Connect', { 
+          status: 'fail', 
+          message: 'Connection failed',
+          details: errorMsg.substring(0, 100),
+          duration: Date.now() - startMwaConnect
+        });
+        log('✗ MWA Connect failed: ' + errorMsg);
+      }
+    }
+
+    // Test 14: MWA Sign (if connected)
+    const startMwaSign = Date.now();
+    updateTest('MWA Sign', { status: 'running', message: 'Signing...' });
+    try {
+      const mwa = getMwaService();
+      
+      if (!mwa.isAuthorized()) {
+        updateTest('MWA Sign', { 
+          status: 'skip', 
+          message: 'Not connected',
+          duration: Date.now() - startMwaSign
+        });
+        log('⊘ MWA Sign skipped (not connected)');
+      } else {
+        const testMessage = new TextEncoder().encode('eStream test message: ' + Date.now());
+        const signResult = await mwa.signMessage(testMessage);
+        
+        updateTest('MWA Sign', { 
+          status: 'pass', 
+          message: 'Signed with Seed Vault!',
+          details: `Sig: ${bs58.encode(signResult.signature).substring(0, 24)}...`,
+          duration: Date.now() - startMwaSign
+        });
+        log('✓ MWA SIGNING SUCCESS: ' + bs58.encode(signResult.signature).substring(0, 16) + '...');
+      }
+    } catch (e) {
+      const errorMsg = String(e);
+      if (errorMsg.includes('cancelled') || errorMsg.includes('rejected')) {
+        updateTest('MWA Sign', { 
+          status: 'skip', 
+          message: 'User cancelled',
+          duration: Date.now() - startMwaSign
+        });
+        log('⊘ MWA Sign cancelled by user');
+      } else {
+        updateTest('MWA Sign', { 
+          status: 'fail', 
+          message: 'Sign failed',
+          details: errorMsg.substring(0, 100),
+          duration: Date.now() - startMwaSign
+        });
+        log('✗ MWA Sign failed: ' + errorMsg);
+      }
     }
 
     log('=== Test suite complete ===');

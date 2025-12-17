@@ -1,10 +1,11 @@
 /**
  * Crypto utilities for estream-app.
  * 
- * Uses native crypto APIs where available, with fallbacks.
+ * Uses @noble/hashes for cryptographic primitives.
  */
 
 import nacl from 'tweetnacl';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
 
 /**
  * SHA256 hash function.
@@ -12,11 +13,7 @@ import nacl from 'tweetnacl';
  * @returns 32-byte hash
  */
 export function sha256(data: Uint8Array): Uint8Array {
-  // In React Native, we may need to use a native module or library
-  // For now, use tweetnacl's hash (which is SHA-512, then truncated)
-  // TODO: Replace with proper SHA-256 implementation
-  const hash = nacl.hash(data);
-  return hash.slice(0, 32);
+  return nobleSha256(data);
 }
 
 /**
@@ -92,4 +89,5 @@ export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   }
   return result === 0;
 }
+
 

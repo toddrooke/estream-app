@@ -212,6 +212,58 @@ export default function DevTools() {
     }
   }, [deviceInfo, tests, logs]);
 
+  // Auto-capture screenshots after test completion
+  const [autoCapturePaths, setAutoCapturePaths] = useState<string[]>([]);
+  const scrollRef = useRef<ScrollView>(null);
+  
+  const autoCaptureFull = useCallback(async () => {
+    if (!viewShotRef.current) return [];
+    
+    const paths: string[] = [];
+    const timestamp = Date.now();
+    
+    try {
+      // Capture 1: Scroll to top (test results)
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+      await new Promise(resolve => setTimeout(resolve, 300)); // Wait for scroll
+      
+      const uri1 = await viewShotRef.current.capture?.();
+      if (uri1) {
+        const saved1 = await CameraRoll.saveAsset(uri1, { type: 'photo' });
+        paths.push(uri1);
+        console.log('Screenshot 1 (Results) saved:', saved1);
+      }
+      
+      // Capture 2: Scroll to middle (more results)
+      scrollRef.current?.scrollTo({ y: 400, animated: false });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      const uri2 = await viewShotRef.current.capture?.();
+      if (uri2) {
+        const saved2 = await CameraRoll.saveAsset(uri2, { type: 'photo' });
+        paths.push(uri2);
+        console.log('Screenshot 2 (More Results) saved:', saved2);
+      }
+      
+      // Capture 3: Scroll to bottom (console log)
+      scrollRef.current?.scrollToEnd({ animated: false });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      const uri3 = await viewShotRef.current.capture?.();
+      if (uri3) {
+        const saved3 = await CameraRoll.saveAsset(uri3, { type: 'photo' });
+        paths.push(uri3);
+        console.log('Screenshot 3 (Console) saved:', saved3);
+      }
+      
+      setAutoCapturePaths(paths);
+      return paths;
+    } catch (error) {
+      console.error('Auto-capture failed:', error);
+      return paths;
+    }
+  }, []);
+
   // Logging helper
   const log = useCallback((message: string) => {
     const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
@@ -722,7 +774,22 @@ export default function DevTools() {
 
     log('=== Test suite complete ===');
     setIsRunning(false);
-  }, [keyPair, updateTest, log]);
+    
+    // Auto-capture screenshots after a short delay
+    setTimeout(async () => {
+      log('📸 Auto-capturing screenshots...');
+      const paths = await autoCaptureFull();
+      if (paths.length > 0) {
+        log(`✅ Saved ${paths.length} screenshots to camera roll`);
+        Alert.alert(
+          '📸 Screenshots Captured',
+          `${paths.length} screenshots saved to camera roll:\n• Test Results (top)\n• Test Results (middle)\n• Console Log (bottom)`,
+        );
+      } else {
+        log('⚠️ Screenshot capture failed');
+      }
+    }, 500);
+  }, [keyPair, updateTest, log, autoCaptureFull]);
 
   // Summary stats
   const stats = tests.reduce(
@@ -736,7 +803,11 @@ export default function DevTools() {
   return (
     <SafeAreaView style={styles.container}>
       <ViewShot ref={viewShotRef} options={{ format: 'png', quality: 1 }} style={styles.viewShot}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView 
+        ref={scrollRef}
+        style={styles.scroll} 
+        contentContainerStyle={styles.scrollContent}
+      >
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>🔧 eStream DevTools</Text>
@@ -765,7 +836,21 @@ export default function DevTools() {
             >
               <Text style={styles.exportButtonText}>📋 Export</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.exportButton, { backgroundColor: '#1a3a1a' }]}
+              onPress={autoCaptureFull}
+              disabled={isSaving}
+            >
+              <Text style={[styles.exportButtonText, { color: '#22c55e' }]}>📷 Full</Text>
+            </TouchableOpacity>
           </View>
+          
+          {/* Auto-captured indicator */}
+          {autoCapturePaths.length > 0 && (
+            <Text style={styles.captureIndicator}>
+              ✅ {autoCapturePaths.length} screenshots saved to camera roll
+            </Text>
+          )}
         </View>
 
         {/* Device Info */}
@@ -909,6 +994,12 @@ const styles = StyleSheet.create({
   exportButtonText: {
     color: '#888888',
     fontSize: 12,
+  },
+  captureIndicator: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#22c55e',
+    textAlign: 'center',
   },
   section: {
     marginBottom: 24,

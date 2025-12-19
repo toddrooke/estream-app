@@ -21,30 +21,44 @@ function App(): React.JSX.Element {
 
   const initializeQuic = async () => {
     try {
-      console.log('[App] Initializing native QUIC client...');
+      console.log('[App] Starting complete QUIC + PQC test...');
+      setError('Step 1/4: Initializing...');
       
-      // Create QUIC client (connects to localhost for E2E tests)
-      const client = new QuicMessagingClient('127.0.0.1:5000');
+      // Create QUIC client (connects via WiFi to Mac)
+      // Mac IP on WiFi: 172.26.43.211
+      const client = new QuicMessagingClient('172.26.43.211:5001');
       
-      // Initialize (creates Tokio runtime)
+      // Step 1: Initialize (creates Tokio runtime)
+      console.log('[App] Step 1: Initialize()...');
       await client.initialize();
-      console.log('[App] QUIC client initialized');
+      console.log('[App] ✅ QUIC client initialized');
+      setError('Step 2/4: Connecting to eStream node...');
       
-      // Connect to eStream node
+      // Step 2: Connect to eStream node
+      console.log('[App] Step 2: Connect()...');
       await client.connect();
-      console.log('[App] QUIC connected successfully');
+      console.log('[App] ✅ QUIC connected successfully!');
+      setError('Step 3/4: Generating PQ device keys...');
       
-      // Generate device keys
-      const publicKeys = await client.generateDeviceKeys('estream-app');
-      console.log('[App] Device keys generated:', publicKeys);
+      // Step 3: Generate device keys (Kyber1024 + Dilithium5)
+      console.log('[App] Step 3: GenerateDeviceKeys()...');
+      const publicKeys = await client.generateDeviceKeys('estream-cipher');
+      console.log('[App] ✅ Device keys generated:', publicKeys);
+      
+      setError('SUCCESS! 🎉\n\n' +
+        '✅ Tokio runtime initialized\n' +
+        '✅ QUIC connection established\n' +
+        '✅ PQ keys generated (Kyber1024 + Dilithium5)\n\n' +
+        `Key Hash: ${publicKeys.key_hash?.substring(0, 16)}...`
+      );
       
       setQuicReady(true);
-      console.log('[App] Native QUIC module ready!');
+      console.log('[App] ✅ All tests passed! Native QUIC + PQC working!');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error('[App] Failed to initialize QUIC:', errorMsg);
-      setError(errorMsg);
-      setQuicReady(true); // Continue anyway for testing
+      console.error('[App] Test failed:', errorMsg);
+      setError('❌ ERROR: ' + errorMsg);
+      setQuicReady(true); // Continue anyway for DevTools
     }
   };
 

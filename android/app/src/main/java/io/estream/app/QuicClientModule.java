@@ -7,12 +7,22 @@ import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReadableArray;
 
 public class QuicClientModule extends ReactContextBaseJavaModule {
+    private static final String TAG = "QuicClientModule";
+
     static {
-        System.loadLibrary("estream_quic_native");
+        try {
+            android.util.Log.i(TAG, "Loading native library estream_quic_native...");
+            System.loadLibrary("estream_quic_native");
+            android.util.Log.i(TAG, "Native library loaded successfully!");
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "Failed to load native library", e);
+            throw e;
+        }
     }
 
     public QuicClientModule(ReactApplicationContext reactContext) {
         super(reactContext);
+        android.util.Log.i(TAG, "QuicClientModule created");
     }
 
     @Override
@@ -22,10 +32,14 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void initialize(Promise promise) {
+        android.util.Log.i(TAG, "initialize() called from JavaScript");
         try {
+            android.util.Log.i(TAG, "Calling nativeInitialize()...");
             long handle = nativeInitialize();
+            android.util.Log.i(TAG, "nativeInitialize() returned handle: " + handle);
             promise.resolve((double) handle);
         } catch (Exception e) {
+            android.util.Log.e(TAG, "initialize() failed: " + e.getMessage(), e);
             promise.reject("INIT_ERROR", e.getMessage(), e);
         }
     }

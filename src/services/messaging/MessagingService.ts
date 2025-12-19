@@ -33,7 +33,11 @@ export class MessagingService {
     this.deviceKeys = deviceKeys;
     
     await this.quicClient.initialize();
+    console.log('[MessagingService] QUIC client initialized');
+    
     await this.quicClient.connect();
+    console.log('[MessagingService] QUIC connected to node');
+    
     await this.loadConversations();
     await this.loadMessageQueue();
     
@@ -83,6 +87,7 @@ export class MessagingService {
     // Add to queue
     this.messageQueue.push(message);
     await this.saveMessageQueue();
+    console.log(`[MessagingService] Message queued: ${message.id}`);
     
     // Notify listeners
     this.emit({ type: 'message:pending', message });
@@ -129,10 +134,11 @@ export class MessagingService {
         // Store in conversation
         await this.storeMessage(message);
         
-        console.log(`[MessagingService] Message ${message.id} sent successfully`);
+        console.log(`[MessagingService] Message sent successfully: ${message.id}`);
         
       } catch (error) {
-        console.error(`[MessagingService] Failed to send message ${message.id}:`, error);
+        console.error(`[MessagingService] Message send error: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`[MessagingService] Failed to send message ${message.id}`);
         message.status = MessageStatus.Failed;
         this.emit({ type: 'message:failed', message, error });
       }

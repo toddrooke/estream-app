@@ -21,6 +21,8 @@ class MainApplication : Application(), ReactApplication {
               // RNGetRandomValuesPackage is autolinked, don't add manually
               // Native Seeker/Hardware vault module
               add(SeekerPackage())
+              // Native QUIC module
+              add(QuicClientPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

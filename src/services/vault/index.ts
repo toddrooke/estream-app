@@ -19,6 +19,14 @@ export { SeekerVaultService } from './SeekerVaultService';
 export { KeychainVaultService } from './KeychainVaultService';
 export { SoftwareVaultService } from './SoftwareVaultService';
 
+// Biometric types (from SeekerVaultService)
+export {
+  BiometricAuthMode,
+  BiometricStatus,
+  BiometricKeyResult,
+  BiometricPromptConfig,
+} from './SeekerVaultService';
+
 // React integration
 export { 
   VaultProvider, 

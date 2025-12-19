@@ -14,19 +14,93 @@ import { TrustLevel } from '@/types';
 import { VaultService, AttestationData } from './VaultService';
 import bs58 from 'bs58';
 
-// Native module interface
+// ============================================================================
+// Biometric Types
+// ============================================================================
+
+/**
+ * Biometric authentication modes
+ */
+export enum BiometricAuthMode {
+  /** No biometric required */
+  None = 0,
+  /** Require biometric for every operation */
+  PerOperation = 1,
+  /** Biometric valid for 30 second window */
+  TimeWindow = 2,
+}
+
+/**
+ * Status of biometric availability
+ */
+export interface BiometricStatus {
+  /** Whether biometric authentication is available */
+  available: boolean;
+  /** Numeric status code from BiometricManager */
+  status: number;
+  /** Human-readable status */
+  statusText: 'available' | 'no_hardware' | 'hw_unavailable' | 'none_enrolled' | 'security_update_required' | 'unknown';
+}
+
+/**
+ * Result of biometric key generation
+ */
+export interface BiometricKeyResult {
+  /** Public key (Base64 encoded) */
+  publicKey: string;
+  /** Authentication mode the key was created with */
+  authMode: BiometricAuthMode;
+  /** Whether the key requires biometric auth */
+  biometricProtected: boolean;
+}
+
+/**
+ * Configuration for biometric prompt
+ */
+export interface BiometricPromptConfig {
+  /** Title shown in the biometric dialog */
+  title?: string;
+  /** Subtitle shown in the biometric dialog */
+  subtitle?: string;
+}
+
+// ============================================================================
+// Native Module Interface
+// ============================================================================
+
 interface SeekerNativeModule {
+  // Basic key operations
   isAvailable(): Promise<boolean>;
-  generateKey(alias: string): Promise<string>;  // Returns public key base58
+  generateKey(alias: string): Promise<string>;  // Returns public key base64
   hasKey(alias: string): Promise<boolean>;
-  getPublicKey(alias: string): Promise<string>;  // Base58
+  getPublicKey(alias: string): Promise<string>;  // Base64
   sign(alias: string, message: string): Promise<string>;  // Base64 in, Base64 out
   getAttestation(alias: string): Promise<{
     certificates: string[];  // Base64
     challenge: string;       // Hex
     timestamp: number;
+    securityLevel: string;
+    isInsideSecureHardware: boolean;
   } | null>;
   deleteKey(alias: string): Promise<boolean>;
+  
+  // Biometric operations
+  isBiometricAvailable(): Promise<{
+    available: boolean;
+    status: number;
+    statusText: string;
+  }>;
+  generateBiometricKey(alias: string, authMode: number): Promise<{
+    publicKey: string;
+    authMode: number;
+    biometricProtected: boolean;
+  }>;
+  signWithBiometric(
+    alias: string, 
+    messageB64: string, 
+    title: string, 
+    subtitle: string
+  ): Promise<string>;  // Returns signature Base64
 }
 
 // Get native module (will be null on iOS or non-Seeker Android)
@@ -34,6 +108,7 @@ const SeekerModule: SeekerNativeModule | null =
   Platform.OS === 'android' ? NativeModules.SeekerModule : null;
 
 const DEFAULT_KEY_ALIAS = 'estream-signing-key';
+const DEFAULT_BIOMETRIC_KEY_ALIAS = 'estream-biometric-key';
 
 /**
  * Seeker Vault Service Implementation
@@ -214,6 +289,130 @@ export class SeekerVaultService implements VaultService {
       return result;
     } catch (error) {
       console.error('Failed to delete Seeker key:', error);
+      return false;
+    }
+  }
+
+  // ==========================================================================
+  // Biometric Authentication Methods
+  // ==========================================================================
+
+  /**
+   * Check if biometric authentication is available on this device.
+   * 
+   * @returns BiometricStatus with availability info
+   */
+  async isBiometricAvailable(): Promise<BiometricStatus> {
+    if (!SeekerModule) {
+      return {
+        available: false,
+        status: -1,
+        statusText: 'no_hardware',
+      };
+    }
+
+    try {
+      const result = await SeekerModule.isBiometricAvailable();
+      return {
+        available: result.available,
+        status: result.status,
+        statusText: result.statusText as BiometricStatus['statusText'],
+      };
+    } catch (error) {
+      console.warn('Biometric availability check failed:', error);
+      return {
+        available: false,
+        status: -1,
+        statusText: 'unknown',
+      };
+    }
+  }
+
+  /**
+   * Generate a new key pair with biometric protection.
+   * 
+   * @param authMode - Authentication mode (None, PerOperation, TimeWindow)
+   * @param alias - Optional custom key alias (defaults to biometric-specific alias)
+   * @returns BiometricKeyResult with public key and auth info
+   */
+  async generateBiometricKey(
+    authMode: BiometricAuthMode = BiometricAuthMode.PerOperation,
+    alias?: string
+  ): Promise<BiometricKeyResult> {
+    if (!SeekerModule) {
+      throw new Error('Seeker not available');
+    }
+
+    const keyAlias = alias || DEFAULT_BIOMETRIC_KEY_ALIAS;
+
+    try {
+      const result = await SeekerModule.generateBiometricKey(keyAlias, authMode);
+      return {
+        publicKey: result.publicKey,
+        authMode: result.authMode as BiometricAuthMode,
+        biometricProtected: result.biometricProtected,
+      };
+    } catch (error) {
+      console.error('Failed to generate biometric key:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sign a message with biometric authentication.
+   * 
+   * This will show a biometric prompt to the user. The signing operation
+   * is bound to the biometric authentication (CryptoObject), ensuring
+   * the signature is only valid if biometric auth succeeded.
+   * 
+   * @param message - Message to sign (Uint8Array)
+   * @param prompt - Optional prompt configuration
+   * @param alias - Optional custom key alias
+   * @returns Signature as Uint8Array
+   */
+  async signWithBiometric(
+    message: Uint8Array,
+    prompt: BiometricPromptConfig = {},
+    alias?: string
+  ): Promise<Uint8Array> {
+    if (!SeekerModule) {
+      throw new Error('Seeker not available');
+    }
+
+    const keyAlias = alias || this.keyAlias;
+    const messageB64 = Buffer.from(message).toString('base64');
+    const title = prompt.title || 'Sign Transaction';
+    const subtitle = prompt.subtitle || 'Authenticate to sign';
+
+    try {
+      const signatureB64 = await SeekerModule.signWithBiometric(
+        keyAlias,
+        messageB64,
+        title,
+        subtitle
+      );
+      return Uint8Array.from(Buffer.from(signatureB64, 'base64'));
+    } catch (error) {
+      console.error('Biometric signing failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a biometric-protected key exists.
+   * 
+   * @param alias - Optional custom key alias
+   * @returns true if the key exists
+   */
+  async hasBiometricKey(alias?: string): Promise<boolean> {
+    if (!SeekerModule) {
+      return false;
+    }
+
+    try {
+      return await SeekerModule.hasKey(alias || DEFAULT_BIOMETRIC_KEY_ALIAS);
+    } catch (error) {
+      console.warn('Biometric key check failed:', error);
       return false;
     }
   }

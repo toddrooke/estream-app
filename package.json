@@ -12,11 +12,17 @@
     "ios": "react-native run-ios",
     "start": "react-native start",
     "test": "jest",
+    "test:e2e": "jest --config jest.e2e.config.js",
+    "test:e2e:watch": "jest --config jest.e2e.config.js --watch",
+    "test:e2e:runner": "./scripts/run-e2e-tests.sh",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "clean": "cd android && ./gradlew clean && cd ..",
     "build:android:debug": "cd android && ./gradlew assembleDebug",
-    "build:android:release": "cd android && ./gradlew assembleRelease"
+    "build:android:release": "cd android && ./gradlew assembleRelease",
+    "android:install": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    "android:build": "cd android && ./gradlew assembleDebug && cd ..",
+    "android:logs": "adb logcat -s EstreamApp:V"
   },
   "dependencies": {
     "@craftzdog/react-native-buffer": "^6.1.1",

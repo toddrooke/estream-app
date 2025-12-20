@@ -25,38 +25,50 @@ function App(): React.JSX.Element {
       setError('Step 1/4: Initializing...');
       
       // Create QUIC client
-      // Use localhost:5000 which is forwarded via adb reverse to Mac's estream backend
-      // The port forwarding is: Seeker:5000 -> Mac:5001 (QUIC node1)
-      const client = new QuicMessagingClient('127.0.0.1:5000');
+      // Connect directly to Mac's estream backend over WiFi
+      const ESTREAM_QUIC_ADDR = '192.168.30.162:5001'; // Maps to Docker port 5000 (QUIC)
+      const client = new QuicMessagingClient(ESTREAM_QUIC_ADDR);
       
       // Step 1: Initialize (creates Tokio runtime)
       console.log('[App] Step 1: Initialize()...');
       await client.initialize();
       console.log('[App] ✅ QUIC client initialized');
-      setError('Step 2/4: Generating PQ device keys first...');
+      setError('Step 2/4: Generating PQ device keys...');
       
-      // Step 2: Generate device keys FIRST (more stable, no network)
-      // This tests the PQ crypto without network dependency
+      // Step 2: Generate device keys (PQ crypto, no network)
       console.log('[App] Step 2: GenerateDeviceKeys()...');
       const publicKeys = await client.generateDeviceKeys('estream-app');
       console.log('[App] ✅ Device keys generated:', publicKeys);
       setError('Step 3/4: Connecting to eStream node...');
       
-      // Step 3: QUIC Connect is DISABLED due to native module bug
-      // The Rust code crashes with SIGSEGV when backend is unreachable
-      // This needs to be fixed in the estream-quic-native Rust crate
-      console.log('[App] ⚠️ QUIC Connect disabled (native module bug)');
+      // Step 3: QUIC Connect - now with proper error handling!
+      let quicConnected = false;
+      try {
+        console.log(`[App] Step 3: Connecting to ${ESTREAM_QUIC_ADDR}...`);
+        await client.connect();
+        console.log('[App] ✅ QUIC connection established!');
+        quicConnected = true;
+      } catch (connErr) {
+        console.warn('[App] ⚠️ QUIC connect failed (gracefully):', connErr);
+        // Continue - connection failure is handled gracefully now
+      }
       
       // key_hash is a byte array, convert to hex for display
       const keyHashHex = publicKeys.key_hash 
         ? Array.from(publicKeys.key_hash as number[]).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16)
         : 'N/A';
       
-      const status = 'SUCCESS! 🎉\n\n' +
-        '✅ Tokio runtime initialized\n' +
-        '✅ PQ keys generated (Kyber1024 + Dilithium5)\n' +
-        '⚠️ QUIC connect disabled (native bug)\n\n' +
-        `Key Hash: ${keyHashHex}...`;
+      const status = quicConnected 
+        ? 'SUCCESS! 🎉🎉🎉\n\n' +
+          '✅ Tokio runtime initialized\n' +
+          '✅ PQ keys generated (Kyber1024 + Dilithium5)\n' +
+          '✅ QUIC/UDP connected to estream!\n\n' +
+          `Key Hash: ${keyHashHex}...`
+        : 'PARTIAL SUCCESS 🎉\n\n' +
+          '✅ Tokio runtime initialized\n' +
+          '✅ PQ keys generated (Kyber1024 + Dilithium5)\n' +
+          '⚠️ QUIC connect failed (backend unreachable?)\n\n' +
+          `Key Hash: ${keyHashHex}...`;
       
       setError(status);
       setQuicReady(true);

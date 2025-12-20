@@ -49,8 +49,9 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
         android.util.Log.i(TAG, "connect() called with handle=" + handle + " nodeAddr=" + nodeAddr);
         try {
             // Validate parameters before calling native code
-            if (handle == 0) {
-                promise.reject("CONNECT_ERROR", "Invalid handle: 0");
+            // Note: handle 0 is valid (Rust uses 0-based indexing)
+            if (handle < 0) {
+                promise.reject("CONNECT_ERROR", "Invalid handle: " + handle);
                 return;
             }
             if (nodeAddr == null || nodeAddr.isEmpty()) {

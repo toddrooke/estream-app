@@ -63,7 +63,8 @@ export class QuicMessagingClient {
    * Connect to the eStream node
    */
   async connect(): Promise<void> {
-    if (!this.managerPtr) {
+    // Note: handle 0 is valid, so check for null/undefined specifically
+    if (this.managerPtr === null || this.managerPtr === undefined) {
       throw new Error('QuicClient not initialized. Call initialize() first.');
     }
     
@@ -80,7 +81,8 @@ export class QuicMessagingClient {
    * Send a PQ wire message
    */
   async sendMessage(message: PqWireMessage): Promise<void> {
-    if (!this.managerPtr) {
+    // Note: handle 0 is valid, so check for null/undefined specifically
+    if (this.managerPtr === null || this.managerPtr === undefined) {
       throw new Error('QuicClient not initialized. Call initialize() first.');
     }
     

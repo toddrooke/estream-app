@@ -1066,9 +1066,11 @@ export default function DevTools() {
         });
         log('⊘ QUIC Connect skipped (no handle)');
       } else {
-        // Try to connect to local forwarded port or estream server
-        // Using 127.0.0.1:5000 which should be forwarded via adb reverse
-        await QuicClient.connect(quicHandle, '127.0.0.1:5000');
+        // Connect directly to estream node over WiFi
+        // Mac's local IP with Docker-exposed QUIC port
+        const ESTREAM_QUIC_ADDR = '192.168.30.162:5001'; // Maps to Docker port 5000 (QUIC)
+        log(`Connecting to ${ESTREAM_QUIC_ADDR}...`);
+        await QuicClient.connect(quicHandle, ESTREAM_QUIC_ADDR);
         
         updateTest('QUIC Connect', {
           status: 'pass',

@@ -94,24 +94,40 @@ estream-app/
 
 ## Key Components
 
-### VaultService Interface
+### PqVaultService Interface (PQ-First)
 
 ```typescript
-// src/services/vault/VaultService.ts
-export interface VaultService {
+// src/services/vault/PqVaultService.ts
+export interface PqVaultService {
   isAvailable(): Promise<boolean>;
-  getPublicKey(): Promise<Uint8Array>;
-  getPublicKeyBase58(): Promise<string>;
-  sign(message: Uint8Array): Promise<Uint8Array>;
+  
+  // PQ Public Keys (Dilithium5 + Kyber1024)
+  getPublicKeys(): Promise<DevicePublicKeys>;
+  getPublicKeyRef(): Promise<PqKeyReference>;  // 32-byte hash
+  
+  // PQ Signing (Dilithium5)
+  signDilithium(message: Uint8Array): Promise<PqSignature>;
+  signWithBiometric(message: Uint8Array, prompt: string): Promise<PqSignature>;
+  
+  // PQ Key Exchange (Kyber1024)
+  encapsulateKyber(publicKey: Uint8Array): Promise<{ ciphertext: Uint8Array, sharedSecret: Uint8Array }>;
+  
+  // Trust & Attestation
   getTrustLevel(): Promise<TrustLevel>;
-  getAttestation?(): Promise<AttestationData | null>;
+  getPqAttestation?(challenge: Uint8Array): Promise<PqAttestationData | null>;
+}
+
+export interface DevicePublicKeys {
+  signing: Uint8Array;    // Dilithium5 public key (~2.5KB)
+  kem: Uint8Array;        // Kyber1024 public key (~1.5KB)
 }
 
 export enum TrustLevel {
-  Untrusted = 0,    // No security
-  Software = 1,     // Encrypted storage
-  Hardware = 2,     // Secure enclave/Seeker
-  Certified = 3,    // HSM with attestation
+  Untrusted = 0,      // No security
+  Software = 1,       // Encrypted storage
+  Hardware = 2,       // TEE
+  SecureElement = 3,  // Seeker Secure Enclave (PQ)
+  Certified = 4,      // HSM with PQ attestation
 }
 ```
 
@@ -154,17 +170,46 @@ export function useTrustBadge(): { label: string; color: string; icon: string };
 3. **Explicit Over Implicit** - Security requirements must be explicit
 4. **Hardware-First** - Prefer hardware-backed keys when available
 
-### Signed Request Envelopes
+### PQ Wire Protocol Client (Production)
+
+```typescript
+// src/api/pqClient.ts
+import { QuicClient, PqWireMessage } from '@estream/quic-native';
+
+export class PqEstreamClient {
+  private quic: QuicClient;
+  private vault: PqVaultService;
+  
+  async connect(serverUrl: string): Promise<void> {
+    this.quic = await QuicClient.connect(serverUrl);
+    
+    // Announce our public keys
+    const publicKeys = await this.vault.getPublicKeys();
+    await this.quic.send(PqWireMessage.keyAnnouncement(publicKeys));
+  }
+  
+  async emitEstream(estream: Estream): Promise<void> {
+    const payload = serializeEstream(estream);
+    
+    // Sign with Dilithium5
+    const signature = await this.vault.signDilithium(payload);
+    
+    await this.quic.send(PqWireMessage.emitEstream(estream, signature));
+  }
+}
+```
+
+### HTTP Signed Envelopes (Legacy Compatibility)
 
 ```typescript
 // src/api/signedClient.ts
 export async function signedFetch(
-  vault: VaultService,
+  vault: PqVaultService,
   method: string,
   path: string,
   body: unknown
 ): Promise<Response> {
-  const publicKey = await vault.getPublicKeyBase58();
+  const publicKeyRef = await vault.getPublicKeyRef();
   const timestamp = Date.now().toString();
   const nonce = generateNonce();
   const bodyHash = computeBodyHash(body);
@@ -172,15 +217,15 @@ export async function signedFetch(
   // Build signing payload
   const payload = `${method}.${path}.${bodyHash}.${timestamp}.${nonce}`;
   
-  // Sign with vault
-  const signature = await vault.sign(new TextEncoder().encode(payload));
+  // Sign with Dilithium5
+  const signature = await vault.signDilithium(new TextEncoder().encode(payload));
   
   return fetch(`${NODE_URL}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      'X-Device-Public-Key': publicKey,
-      'X-Device-Signature': bs58.encode(signature),
+      'X-Device-Public-Key': encodeBase58(publicKeyRef),
+      'X-Device-Signature': encodeBase58(signature),
       'X-Device-Timestamp': timestamp,
       'X-Device-Nonce': nonce,
       'X-Body-Hash': bodyHash,
@@ -279,11 +324,28 @@ npm run lint
 
 ## Security Considerations
 
-1. **Key Storage**: Use Seeker Seed Vault when available, otherwise iOS Keychain / Android Keystore
-2. **Attestation**: Hardware-backed keys provide attestation for key registry
-3. **Signed Requests**: All privileged operations require signed envelopes
+> **See**: [estream Security Patterns Guide](../estream/docs/guides/SECURITY_PATTERNS.md) for authoritative patterns.
+
+### PQ-First Security
+
+1. **PQ Key Storage**: Use Seeker Secure Enclave for Dilithium5/Kyber1024 keys
+2. **PQ Attestation**: Hardware-backed PQ keys provide quantum-resistant attestation
+3. **PQ Signed Requests**: All privileged operations use Dilithium5 signatures
 4. **No Plain Secrets**: Never store unencrypted private keys
 5. **Fail Closed**: On vault errors, deny operations rather than fallback
+
+### Core Security Principles
+
+1. **Fail Closed, Never Fail Open** - On any error, deny access
+2. **One Door Principle** - Governance is single entry for privileged ops
+3. **Constant-Time for Secrets** - All crypto comparisons use constant-time
+4. **PQ-First** - All production crypto is Dilithium5 + Kyber1024
+5. **Validate All Inputs** - Never trust any input
+
+### Related Issues
+
+- estream Issue #42: PQ Seeker Integration
+- estream Issue #33: PQ Security Posture
 
 ---
 

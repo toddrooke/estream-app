@@ -1,58 +1,53 @@
 # eStream Mobile App
 
-> React Native client for the eStream network
-
-The eStream mobile app provides direct access to eStream network functionality, serving as both a developer tool and reference implementation for downstream applications.
-
-**Current Status**: Early development - basic vault integration complete
+> React Native client for the eStream network with post-quantum security
 
 ---
 
-## Current Features (Implemented)
+## Overview
 
-- **Vault Integration** - Hardware-backed key management
-  - Seeker Seed Vault support (Android)
-  - iOS Keychain support
-  - Software fallback for development
-- **Trust Badge Display** - Visual security level indicator
-- **Public Key Display** - View device identity
+The eStream mobile app provides direct access to eStream network functionality with quantum-resistant cryptography, serving as both a developer tool and reference implementation.
 
-## Planned Features (Not Yet Implemented)
+## PQ-First Architecture
 
-- Node Connection via WebSocket
-- Estream Operations (create, sign, browse, verify)
-- Signed Request envelope generation
-- Developer Tools (Merkle proofs, hash chain visualization)
-- NFT Preview integration
+| Component | Algorithm | Purpose |
+|-----------|-----------|---------|
+| Signing | Dilithium5 | Quantum-resistant signatures |
+| Key Exchange | Kyber1024 | Quantum-resistant encryption |
+| Transport | QUIC | PQ Wire Protocol |
+
+---
+
+## Features
+
+### Implemented
+- **PQ Vault Integration** - Hardware-backed Dilithium5/Kyber1024 key management
+- **QUIC Client** - Native Rust QUIC with PQ Wire Protocol
+- **Seeker Support** - Solana Seeker Secure Enclave integration
+- **Trust Level Display** - Visual security level indicator
+
+### Development
+- **Messaging Service** - eStream messaging integration
+- **Platform Messaging UI** - Cipher SDK UI components
+- **Seeker Testing** - E2E testing on Seeker device
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/toddrooke/estream-app.git
-cd estream-app
-
 # Install dependencies
 npm install
+
+# Build native QUIC module
+cd rust && cargo build --release
 
 # Start Metro bundler
 npm start
 
-# Run on Android
+# Run on Android (Seeker recommended)
 npm run android
-
-# Run on iOS (macOS only)
-npm run ios
 ```
-
-## Prerequisites
-
-- Node.js 18+
-- React Native CLI
-- Android Studio (for Android)
-- Xcode (for iOS, macOS only)
 
 ---
 
@@ -60,148 +55,39 @@ npm run ios
 
 ```
 estream-app/
+├── src/
+│   ├── screens/          # React Native screens
+│   ├── components/       # UI components
+│   ├── services/         # Business logic
+│   │   └── vault/        # PQ Vault service
+│   └── native/           # Native module wrappers
+├── rust/                 # Rust QUIC native module
 ├── android/              # Android native code
 ├── ios/                  # iOS native code
-├── src/
-│   ├── App.tsx           # Root component with VaultProvider
-│   ├── api/
-│   │   └── signedClient.ts    # Signed envelope API client
-│   ├── components/
-│   │   └── NftPreview.tsx     # NFT image preview
-│   ├── screens/
-│   │   └── DevTools.tsx       # Developer tools screen
-│   ├── services/
-│   │   ├── nft/               # NFT minting service
-│   │   │   ├── index.ts
-│   │   │   └── NftMintService.ts
-│   │   ├── solana/            # Mobile Wallet Adapter
-│   │   │   ├── index.ts
-│   │   │   └── MwaService.ts
-│   │   └── vault/             # Key vault services
-│   │       ├── index.ts
-│   │       ├── VaultService.ts        # Interface
-│   │       ├── VaultContext.tsx       # React context
-│   │       ├── SeekerVaultService.ts  # Android Seeker
-│   │       ├── KeychainVaultService.ts # iOS Keychain
-│   │       └── SoftwareVaultService.ts # Dev fallback
-│   ├── types/
-│   │   └── index.ts           # TypeScript types
-│   └── utils/
-│       └── crypto.ts          # Crypto utilities
-├── docs/
-│   ├── IDENTITY_NFT_DESIGN.md # NFT specification
-│   └── SEEKER_SECURITY_DESIGN.md
-├── screenshots/          # Development screenshots
-└── package.json
+└── docs/                 # Documentation
 ```
 
 ---
 
-## Security Architecture
+## Security
 
-This app implements the eStream security posture:
+> **See**: [estream Security Patterns Guide](../estream/docs/guides/SECURITY_PATTERNS.md)
 
-```
-┌─────────────────────────────────────┐
-│         React Native UI             │
-└───────────────┬─────────────────────┘
-                │
-┌───────────────▼─────────────────────┐
-│      VaultProvider (Context)        │
-│  - Trust level detection            │
-│  - Public key management            │
-│  - Signing interface                │
-└───────────────┬─────────────────────┘
-                │
-┌───────────────▼─────────────────────┐
-│     Vault Service Implementations   │
-│  - SeekerVaultService (Android)     │
-│  - KeychainVaultService (iOS)       │
-│  - SoftwareVaultService (Dev)       │
-└───────────────┬─────────────────────┘
-                │
-                ▼
-        eStream Node (HTTP)
-```
+### Core Principles
 
-### Vault Service Interface
-
-```typescript
-export interface VaultService {
-  isAvailable(): Promise<boolean>;
-  getPublicKey(): Promise<Uint8Array>;
-  getPublicKeyBase58(): Promise<string>;
-  sign(message: Uint8Array): Promise<Uint8Array>;
-  getTrustLevel(): Promise<TrustLevel>;
-  getAttestation?(): Promise<AttestationData | null>;
-}
-```
-
-### Trust Levels
-
-| Level | Description | Badge Color |
-|-------|-------------|-------------|
-| Hardware | Seeker Seed Vault / Secure Enclave | Gold |
-| Software | Encrypted keystore | Green |
-| Untrusted | Development only | Orange |
+1. **PQ-First** - All production crypto uses Dilithium5 + Kyber1024
+2. **Fail Closed** - On any error, deny operation
+3. **Hardware Preferred** - Use Seeker Secure Enclave when available
+4. **Validate All Inputs** - Never trust any input
 
 ---
 
-## Signed Request Envelopes
+## Related
 
-For privileged API operations, requests are signed with Ed25519:
-
-```typescript
-// src/api/signedClient.ts
-import { useVault } from '../services/vault';
-
-export async function signedFetch(
-  vault: VaultService,
-  method: string,
-  path: string,
-  body: unknown
-): Promise<Response> {
-  // Build signing payload: {method}.{path}.{bodyHash}.{ts}.{nonce}
-  // Sign with vault
-  // Add X-Device-* headers
-}
-```
-
-**Required Headers**:
-- `X-Device-Public-Key` - Base58 public key
-- `X-Device-Signature` - Base58 signature
-- `X-Device-Timestamp` - Unix milliseconds
-- `X-Device-Nonce` - Hex nonce
+- [CLAUDE.md](./CLAUDE.md) - AI context
+- [estream-core](../estream) - Backend server
+- [estream-cipher](../estream-cipher) - Messaging app
 
 ---
 
-## Development
-
-```bash
-# Run tests
-npm test
-
-# Lint
-npm run lint
-
-# Type check
-npm run typecheck
-```
-
----
-
-## Related Repositories
-
-- [estream](https://github.com/toddrooke/estream) - Core eStream platform
-- [estream-browser](https://github.com/toddrooke/estream/tree/main/crates/estream-browser) - WASM client library
-- [taketitle-app](https://github.com/taketitle/taketitle-app) - Example downstream app
-
----
-
-## License
-
-Apache 2.0 - See [LICENSE](LICENSE)
-
----
-
-**Built by**: [Todd Rooke](https://github.com/toddrooke)
+**Repository**: [github.com/toddrooke/estream-app](https://github.com/toddrooke/estream-app)

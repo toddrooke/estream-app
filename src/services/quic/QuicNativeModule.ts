@@ -54,3 +54,4 @@ if (!QuicClient) {
 
 export const QuicNativeModule: QuicNativeModuleType = QuicClient;
 
+

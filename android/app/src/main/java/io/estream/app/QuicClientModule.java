@@ -46,11 +46,27 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void connect(double handle, String nodeAddr, Promise promise) {
+        android.util.Log.i(TAG, "connect() called with handle=" + handle + " nodeAddr=" + nodeAddr);
         try {
+            // Validate parameters before calling native code
+            if (handle == 0) {
+                promise.reject("CONNECT_ERROR", "Invalid handle: 0");
+                return;
+            }
+            if (nodeAddr == null || nodeAddr.isEmpty()) {
+                promise.reject("CONNECT_ERROR", "Invalid nodeAddr: null or empty");
+                return;
+            }
+            android.util.Log.i(TAG, "Calling nativeConnect()...");
             nativeConnect((long) handle, nodeAddr);
+            android.util.Log.i(TAG, "nativeConnect() returned successfully");
             promise.resolve(null);
         } catch (Exception e) {
+            android.util.Log.e(TAG, "connect() failed: " + e.getMessage(), e);
             promise.reject("CONNECT_ERROR", e.getMessage(), e);
+        } catch (Error e) {
+            android.util.Log.e(TAG, "connect() crashed: " + e.getMessage(), e);
+            promise.reject("CONNECT_CRASH", "Native crash: " + e.getMessage());
         }
     }
 
@@ -66,11 +82,20 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void generateDeviceKeys(String appScope, Promise promise) {
+        android.util.Log.i(TAG, "generateDeviceKeys() called with appScope=" + appScope);
         try {
-            String publicKeysJson = nativeGenerateDeviceKeys(appScope);
+            // Native returns byte[] (the JNI function returns jbyteArray)
+            // Convert to String (JSON) for JavaScript
+            byte[] publicKeysBytes = nativeGenerateDeviceKeys(appScope);
+            String publicKeysJson = new String(publicKeysBytes, java.nio.charset.StandardCharsets.UTF_8);
+            android.util.Log.i(TAG, "generateDeviceKeys() returned " + publicKeysJson.length() + " chars");
             promise.resolve(publicKeysJson);
         } catch (Exception e) {
+            android.util.Log.e(TAG, "generateDeviceKeys() failed: " + e.getMessage(), e);
             promise.reject("KEYGEN_ERROR", e.getMessage(), e);
+        } catch (Error e) {
+            android.util.Log.e(TAG, "generateDeviceKeys() crashed: " + e.getMessage(), e);
+            promise.reject("KEYGEN_CRASH", "Native crash: " + e.getMessage());
         }
     }
 
@@ -85,10 +110,12 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
     }
 
     // Native methods
+    // NOTE: These signatures MUST match the JNI function signatures in the Rust code
+    // The Rust code returns jbyteArray (byte[]), not jstring (String)
     private native long nativeInitialize();
     private native void nativeConnect(long handle, String nodeAddr);
     private native void nativeSendMessage(long handle, String nodeAddr, String messageJson);
-    private native String nativeGenerateDeviceKeys(String appScope);
+    private native byte[] nativeGenerateDeviceKeys(String appScope);  // Returns byte[], not String!
     private native void nativeDispose(long handle);
 }
 

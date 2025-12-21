@@ -654,6 +654,6 @@ describe('QUIC Client', () => {
 
 ---
 
-**Status**: ⏳ Not Started  
-**Branch**: `feature/quic-native-module`
+**Status**: ✅ Complete  
+**Branch**: `main`
 

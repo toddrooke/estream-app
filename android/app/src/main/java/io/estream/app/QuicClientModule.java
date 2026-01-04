@@ -11,12 +11,20 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
 
     static {
         try {
-            android.util.Log.i(TAG, "Loading native library estream_quic_native...");
-            System.loadLibrary("estream_quic_native");
+            // Load the main native library with QUIC + HTTP/3 support
+            android.util.Log.i(TAG, "Loading native library estream_native...");
+            System.loadLibrary("estream_native");
             android.util.Log.i(TAG, "Native library loaded successfully!");
-        } catch (Exception e) {
-            android.util.Log.e(TAG, "Failed to load native library", e);
-            throw e;
+        } catch (UnsatisfiedLinkError e) {
+            // Fallback to older library name
+            android.util.Log.w(TAG, "estream_native not found, trying estream_quic_native...");
+            try {
+                System.loadLibrary("estream_quic_native");
+                android.util.Log.i(TAG, "Fallback library loaded (no HTTP/3)");
+            } catch (Exception e2) {
+                android.util.Log.e(TAG, "Failed to load any native library", e2);
+                throw e2;
+            }
         }
     }
 
@@ -110,6 +118,90 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
         }
     }
 
+    // ============================================================================
+    // HTTP/3 Client Methods (UDP-based write operations)
+    // ============================================================================
+
+    @ReactMethod
+    public void h3Connect(String serverAddr, Promise promise) {
+        android.util.Log.i(TAG, "h3Connect() called with serverAddr=" + serverAddr);
+        try {
+            byte[] result = nativeH3Connect(serverAddr);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            android.util.Log.i(TAG, "h3Connect() result: " + json);
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "h3Connect() failed: " + e.getMessage(), e);
+            promise.reject("H3_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void h3Post(String path, String body, Promise promise) {
+        android.util.Log.i(TAG, "h3Post() called with path=" + path);
+        try {
+            byte[] result = nativeH3Post(path, body);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            android.util.Log.i(TAG, "h3Post() result: " + json.substring(0, Math.min(100, json.length())));
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "h3Post() failed: " + e.getMessage(), e);
+            promise.reject("H3_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void h3Get(String path, Promise promise) {
+        android.util.Log.i(TAG, "h3Get() called with path=" + path);
+        try {
+            byte[] result = nativeH3Get(path);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "h3Get() failed: " + e.getMessage(), e);
+            promise.reject("H3_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void h3IsConnected(Promise promise) {
+        try {
+            long connected = nativeH3IsConnected();
+            promise.resolve(connected == 1);
+        } catch (Exception e) {
+            promise.reject("H3_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void h3Disconnect(Promise promise) {
+        try {
+            nativeH3Disconnect();
+            promise.resolve(null);
+        } catch (Exception e) {
+            promise.reject("H3_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void h3MintIdentityNft(String owner, String trustLevel, Promise promise) {
+        android.util.Log.i(TAG, "h3MintIdentityNft() called for owner=" + owner + " trustLevel=" + trustLevel);
+        try {
+            // Build the JSON body
+            String body = "{\"owner\":\"" + owner + "\",\"trust_level\":\"" + trustLevel + 
+                         "\",\"member_since\":\"Jan 2026\",\"activity_score\":100,\"anchor_count\":1}";
+            
+            // POST to /api/v1/nft/identity
+            byte[] result = nativeH3Post("/api/v1/nft/identity", body);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            android.util.Log.i(TAG, "h3MintIdentityNft() result: " + json.substring(0, Math.min(200, json.length())));
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "h3MintIdentityNft() failed: " + e.getMessage(), e);
+            promise.reject("H3_ERROR", e.getMessage(), e);
+        }
+    }
+
     // Native methods
     // NOTE: These signatures MUST match the JNI function signatures in the Rust code
     // The Rust code returns jbyteArray (byte[]), not jstring (String)
@@ -118,5 +210,12 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
     private native void nativeSendMessage(long handle, String nodeAddr, String messageJson);
     private native byte[] nativeGenerateDeviceKeys(String appScope);  // Returns byte[], not String!
     private native void nativeDispose(long handle);
+
+    // HTTP/3 native methods
+    private native byte[] nativeH3Connect(String serverAddr);
+    private native byte[] nativeH3Post(String path, String body);
+    private native byte[] nativeH3Get(String path);
+    private native long nativeH3IsConnected();
+    private native void nativeH3Disconnect();
 }
 

@@ -6,8 +6,18 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { transact } from '@solana-mobile/mobile-wallet-adapter-walletlib';
+import { View, Text, TouchableOpacity, Modal, StyleSheet, ScrollView, ActivityIndicator, Platform } from 'react-native';
+
+// MWA is Android-only - conditionally import
+let transact: any;
+if (Platform.OS === 'android') {
+  try {
+    const mwa = require('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+    transact = mwa.transact;
+  } catch (e) {
+    console.warn('[SigningRequestModal] MWA not available:', e);
+  }
+}
 
 interface SigningRequestProps {
   visible: boolean;
@@ -29,8 +39,12 @@ export function SigningRequestModal({ visible, message, onApprove, onReject }: S
     setError(null);
     
     try {
-      // Use MWA to sign transaction
-      const result = await transact(async (wallet) => {
+      if (Platform.OS !== 'android' || !transact) {
+        throw new Error('Transaction signing requires Android with Mobile Wallet Adapter. Use PqCryptoModule for iOS.');
+      }
+      
+      // Use MWA to sign transaction (Android only)
+      const result = await transact(async (wallet: any) => {
         // Authorize wallet
         const authResult = await wallet.authorize({
           cluster: 'mainnet-beta',

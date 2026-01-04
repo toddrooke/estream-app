@@ -75,3 +75,8 @@ temp/
 
 
 
+
+# Native libraries (built from estream mobile SDK)
+android/app/src/main/jniLibs/
+ios/EstreamApp/*.a
+ios/EstreamApp/EStreamSDK/*.a

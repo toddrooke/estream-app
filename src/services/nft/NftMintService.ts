@@ -1,13 +1,48 @@
 /**
  * NFT Minting Service
  * 
- * Creates and manages eStream and TakeTitle NFTs using Metaplex.
- * Uses devnet for testing, mainnet-beta for production.
+ * Creates and manages eStream and TakeTitle NFTs via the eStream API.
+ * NFTs are stored in the eStream DAG with dynamic SVG generation.
+ * 
+ * ## Security Policy
+ * - HTTP/3 (QUIC/UDP): Full access (reads + writes) - port 8443
+ * - HTTP/2 (TCP): Read-only access - port 8090
+ * 
+ * Write operations (POST, PUT, DELETE) require HTTP/3.
  */
 
-import { Connection, PublicKey, Keypair, clusterApiUrl } from '@solana/web3.js';
+import { 
+  Connection, 
+  PublicKey, 
+  clusterApiUrl,
+} from '@solana/web3.js';
 
-export type NftCluster = 'devnet' | 'testnet' | 'mainnet-beta';
+import { H3Client, getH3Client } from '../quic/QuicClient';
+
+export type NftCluster = 'devnet' | 'testnet' | 'mainnet-beta' | 'localnet';
+
+// eStream server - use Mac's IP directly
+const MAC_IP = '10.0.0.120';
+const ESTREAM_H3_URL = `${MAC_IP}:8443`;   // HTTP/3 (UDP) - full access (writes)
+const ESTREAM_HTTP_URL = `http://${MAC_IP}:8090`;  // HTTP/2 (TCP) - read-only
+
+// Local Solana node URL
+const LOCALNET_URL = `http://${MAC_IP}:8899`;
+
+// eStream NFT API response
+interface EstreamNftResponse {
+  nft_id: string;
+  estream_id: string;
+  image: string;
+  metadata: {
+    name: string;
+    symbol: string;
+    description: string;
+    image: string;
+    attributes: Array<{ trait_type: string; value: unknown }>;
+  };
+  minted_at: number;
+}
 
 export interface NftMetadata {
   name: string;
@@ -51,7 +86,14 @@ export interface MintResult {
   success: boolean;
   mintAddress?: string;
   signature?: string;
+  tokenAccount?: string;
   error?: string;
+}
+
+export interface MintTransaction {
+  transaction: Transaction;
+  mintKeypair: Keypair;
+  metadataUri: string;
 }
 
 /**
@@ -65,9 +107,11 @@ export class NftMintService {
   private connection: Connection;
   private cluster: NftCluster;
 
-  constructor(cluster: NftCluster = 'devnet') {
+  constructor(cluster: NftCluster = 'localnet') {
     this.cluster = cluster;
-    this.connection = new Connection(clusterApiUrl(cluster));
+    const rpcUrl = cluster === 'localnet' ? LOCALNET_URL : clusterApiUrl(cluster);
+    this.connection = new Connection(rpcUrl);
+    console.log(`[NftMintService] Using ${cluster} at ${rpcUrl}`);
   }
 
   /**
@@ -150,47 +194,221 @@ export class NftMintService {
   }
 
   /**
-   * Upload metadata to a decentralized storage (simulated for devnet)
+   * Mint an eStream Identity NFT via HTTP/3 (UDP)
    * 
-   * In production, this would upload to Arweave via Bundlr/Irys
-   * For devnet testing, we use a mock endpoint
+   * Dual-mints:
+   * 1. eStream DAG (immutable event record)
+   * 2. Solana Token-2022 (visible in wallet)
+   * 
+   * Uses HTTP/3 for write operations per security policy.
+   * Falls back to HTTP/2 (TCP) for development if H3 fails.
+   */
+  async mintIdentityNft(
+    ownerPublicKey: string,
+    trustLevel: 'Software' | 'Hardware' | 'Certified',
+    memberSince: string,
+    activityScore: number,
+    anchorCount: number
+  ): Promise<MintResult> {
+    console.log('[NftMintService] Minting Identity NFT (eStream + Solana)...');
+    
+    let estreamNftId: string | undefined;
+    let estreamId: string | undefined;
+    
+    // Step 1: Mint on eStream via HTTP/3
+    try {
+      const h3Client = getH3Client(ESTREAM_H3_URL);
+      await h3Client.connect();
+      
+      const trustLevelLower = trustLevel.toLowerCase() as 'software' | 'hardware' | 'certified';
+      const result = await h3Client.mintIdentityNft(ownerPublicKey, trustLevelLower);
+      
+      estreamNftId = result.nft_id;
+      estreamId = result.estream_id;
+      console.log('[NftMintService] ✅ eStream NFT minted:', estreamNftId);
+    } catch (h3Error) {
+      console.warn('[NftMintService] HTTP/3 failed, trying HTTP fallback:', h3Error);
+      
+      try {
+        const response = await fetch(`${ESTREAM_HTTP_URL}/api/v1/nft/identity`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer dev-seeker-user',
+          },
+          body: JSON.stringify({
+            owner: ownerPublicKey,
+            trust_level: trustLevel,
+            member_since: memberSince,
+            activity_score: activityScore,
+            anchor_count: anchorCount,
+          }),
+        });
+        
+        if (response.ok) {
+          const result: EstreamNftResponse = await response.json();
+          estreamNftId = result.nft_id;
+          estreamId = result.estream_id;
+          console.log('[NftMintService] ✅ eStream NFT minted (HTTP fallback):', estreamNftId);
+        }
+      } catch (e) {
+        console.error('[NftMintService] eStream mint failed:', e);
+      }
+    }
+    
+    // Step 2: Mint on Solana via API (server handles Token-2022)
+    // The metadata URI points to eStream for verification
+    try {
+      const metadataUri = `${ESTREAM_HTTP_URL}/api/v1/nft/${estreamNftId || 'pending'}/metadata`;
+      
+      const response = await fetch(`${ESTREAM_HTTP_URL}/api/v1/nft/solana/mint`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-seeker-user',
+        },
+        body: JSON.stringify({
+          owner: ownerPublicKey,
+          name: 'eStream Identity',
+          symbol: 'ESTREAM',
+          uri: metadataUri,
+          estream_nft_id: estreamNftId,
+        }),
+      });
+      
+      if (response.ok) {
+        const solanaResult = await response.json();
+        console.log('[NftMintService] ✅ Solana NFT minted:', solanaResult.mint);
+        
+        return {
+          success: true,
+          mintAddress: solanaResult.mint,
+          signature: solanaResult.signature,
+          tokenAccount: solanaResult.token_account,
+        };
+      } else {
+        console.warn('[NftMintService] Solana mint failed, returning eStream-only result');
+      }
+    } catch (e) {
+      console.warn('[NftMintService] Solana mint error:', e);
+    }
+    
+    // Return eStream-only result if Solana mint failed
+    return {
+      success: !!estreamNftId,
+      mintAddress: estreamNftId,
+      signature: estreamId,
+      error: !estreamNftId ? 'Both mints failed' : undefined,
+    };
+  }
+
+  /**
+   * Mint a Provenance NFT via the eStream API
+   */
+  async mintProvenanceNft(
+    assetId: string,
+    event: string,
+    documentHash: string
+  ): Promise<MintResult> {
+    console.log('[NftMintService] Minting Provenance NFT via eStream API...');
+    
+    try {
+      const response = await fetch(`${ESTREAM_HTTP_URL}/api/v1/nft/provenance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-seeker-user',
+        },
+        body: JSON.stringify({
+          asset_id: assetId,
+          event,
+          document_hash: documentHash,
+        }),
+      });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('[NftMintService] API error:', error);
+        return { success: false, error };
+      }
+      
+      const result: EstreamNftResponse = await response.json();
+      console.log('[NftMintService] ✅ Provenance NFT minted!', result.nft_id);
+      
+      return {
+        success: true,
+        mintAddress: result.nft_id,
+        signature: result.estream_id,
+      };
+    } catch (e) {
+      console.error('[NftMintService] Mint failed:', e);
+      return { success: false, error: String(e) };
+    }
+  }
+
+  /**
+   * Mint a Ceremony Certificate NFT via the eStream API
+   */
+  async mintCeremonyNft(
+    ceremonyId: string,
+    threshold: number,
+    signers: string[]
+  ): Promise<MintResult> {
+    console.log('[NftMintService] Minting Ceremony NFT via eStream API...');
+    
+    try {
+      const response = await fetch(`${ESTREAM_HTTP_URL}/api/v1/nft/ceremony`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-seeker-user',
+        },
+        body: JSON.stringify({
+          ceremony_id: ceremonyId,
+          threshold,
+          signers,
+        }),
+      });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('[NftMintService] API error:', error);
+        return { success: false, error };
+      }
+      
+      const result: EstreamNftResponse = await response.json();
+      console.log('[NftMintService] ✅ Ceremony NFT minted!', result.nft_id);
+      
+      return {
+        success: true,
+        mintAddress: result.nft_id,
+        signature: result.estream_id,
+      };
+    } catch (e) {
+      console.error('[NftMintService] Mint failed:', e);
+      return { success: false, error: String(e) };
+    }
+  }
+
+  /**
+   * Legacy: Upload metadata (kept for backwards compatibility)
    */
   async uploadMetadata(metadata: NftMetadata): Promise<string> {
-    // For devnet testing, return a mock URI
-    // In production, upload to Arweave
     const mockUri = `https://devnet.nft.estream.io/metadata/${Date.now()}.json`;
-    
     console.log('[NftMintService] Metadata prepared:', metadata.name);
-    console.log('[NftMintService] Mock URI:', mockUri);
-    
-    // In production:
-    // const uri = await bundlr.upload(JSON.stringify(metadata));
-    
     return mockUri;
   }
 
   /**
-   * Mint an NFT (requires server-side signing or MWA integration)
-   * 
-   * For React Native, we need to either:
-   * 1. Call a backend API that handles minting
-   * 2. Use MWA to sign the mint transaction
-   * 
-   * This method prepares the mint but requires a signer.
+   * Legacy: Prepare mint (kept for backwards compatibility)
    */
   async prepareMint(
     metadata: NftMetadata,
     ownerPublicKey: string
   ): Promise<{ metadataUri: string; ready: boolean }> {
     const metadataUri = await this.uploadMetadata(metadata);
-    
     console.log('[NftMintService] Prepared mint for:', ownerPublicKey);
-    console.log('[NftMintService] Metadata URI:', metadataUri);
-    
-    return {
-      metadataUri,
-      ready: true,
-    };
+    return { metadataUri, ready: true };
   }
 
   /**
@@ -218,15 +436,15 @@ export class NftMintService {
    * Get the RPC endpoint for the current cluster
    */
   getRpcEndpoint(): string {
-    return clusterApiUrl(this.cluster);
+    return this.cluster === 'localnet' ? LOCALNET_URL : clusterApiUrl(this.cluster);
   }
 
   /**
-   * Airdrop SOL for testing (devnet only)
+   * Airdrop SOL for testing (devnet and localnet)
    */
   async requestAirdrop(publicKey: string, lamports: number = 1_000_000_000): Promise<boolean> {
-    if (this.cluster !== 'devnet') {
-      console.warn('[NftMintService] Airdrop only available on devnet');
+    if (this.cluster !== 'devnet' && this.cluster !== 'localnet') {
+      console.warn('[NftMintService] Airdrop only available on devnet/localnet');
       return false;
     }
 
@@ -246,7 +464,7 @@ export class NftMintService {
 // Singleton instance
 let nftServiceInstance: NftMintService | null = null;
 
-export function getNftMintService(cluster: NftCluster = 'devnet'): NftMintService {
+export function getNftMintService(cluster: NftCluster = 'localnet'): NftMintService {
   if (!nftServiceInstance) {
     nftServiceInstance = new NftMintService(cluster);
   }

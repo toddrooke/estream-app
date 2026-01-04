@@ -1,15 +1,20 @@
 /**
  * QUIC Client - Native Module Wrapper
  * 
- * Wraps the Rust QUIC native module for React Native
+ * Wraps the Rust QUIC native module for React Native.
+ * Falls back to PqCryptoModule for PQ crypto when QUIC is unavailable.
  */
 
-import { NativeModules } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 
-const { QuicClient: NativeQuicClient } = NativeModules;
+const { QuicClient: NativeQuicClient, PqCryptoModule } = NativeModules;
 
-if (!NativeQuicClient) {
-  throw new Error('QuicClient native module not found. Did you link the native module?');
+// QUIC native module is optional - PQ crypto can work without it
+const QUIC_AVAILABLE = !!NativeQuicClient;
+const PQ_AVAILABLE = !!PqCryptoModule;
+
+if (!QUIC_AVAILABLE && !PQ_AVAILABLE) {
+  console.warn('[QuicClient] Neither QuicClient nor PqCryptoModule found. Native modules not linked.');
 }
 
 export interface PqWireMessage {
@@ -134,5 +139,136 @@ export function getQuicClient(nodeAddr: string = 'node.estream.io:5000'): QuicMe
     defaultClient = new QuicMessagingClient(nodeAddr);
   }
   return defaultClient;
+}
+
+// ============================================================================
+// HTTP/3 Client (UDP-based write operations)
+// ============================================================================
+
+export interface H3Response {
+  status: number;
+  body: string;
+}
+
+export interface NftMintResult {
+  nft_id: string;
+  estream_id: string;
+  image: string;
+  metadata: {
+    name: string;
+    symbol: string;
+    description: string;
+    attributes: Array<{ trait_type: string; value: string | number }>;
+  };
+  minted_at: number;
+}
+
+/**
+ * HTTP/3 Client for write operations.
+ * HTTP/TCP is read-only per security policy; writes require UDP.
+ */
+export class H3Client {
+  private serverAddr: string;
+  
+  constructor(serverAddr: string) {
+    this.serverAddr = serverAddr;
+  }
+  
+  /**
+   * Connect to the HTTP/3 server
+   */
+  async connect(): Promise<void> {
+    if (!QUIC_AVAILABLE) {
+      throw new Error('QuicClient native module not available');
+    }
+    
+    try {
+      await NativeQuicClient.h3Connect(this.serverAddr);
+      console.log(`[H3Client] Connected to ${this.serverAddr}`);
+    } catch (error) {
+      console.error(`[H3Client] Failed to connect:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * POST request over HTTP/3
+   */
+  async post(path: string, body: object): Promise<H3Response> {
+    if (!QUIC_AVAILABLE) {
+      throw new Error('QuicClient native module not available');
+    }
+    
+    try {
+      const result = await NativeQuicClient.h3Post(path, JSON.stringify(body));
+      return JSON.parse(result);
+    } catch (error) {
+      console.error(`[H3Client] POST ${path} failed:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * GET request over HTTP/3
+   */
+  async get(path: string): Promise<H3Response> {
+    if (!QUIC_AVAILABLE) {
+      throw new Error('QuicClient native module not available');
+    }
+    
+    try {
+      const result = await NativeQuicClient.h3Get(path);
+      return JSON.parse(result);
+    } catch (error) {
+      console.error(`[H3Client] GET ${path} failed:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Mint an eStream Identity NFT
+   */
+  async mintIdentityNft(owner: string, trustLevel: 'software' | 'hardware' | 'certified'): Promise<NftMintResult> {
+    if (!QUIC_AVAILABLE) {
+      throw new Error('QuicClient native module not available');
+    }
+    
+    try {
+      const result = await NativeQuicClient.h3MintIdentityNft(owner, trustLevel);
+      console.log(`[H3Client] Identity NFT minted`);
+      return JSON.parse(result);
+    } catch (error) {
+      console.error(`[H3Client] Mint failed:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Check if connected
+   */
+  async isConnected(): Promise<boolean> {
+    if (!QUIC_AVAILABLE) {
+      return false;
+    }
+    
+    return await NativeQuicClient.h3IsConnected();
+  }
+  
+  /**
+   * Disconnect
+   */
+  async disconnect(): Promise<void> {
+    if (QUIC_AVAILABLE) {
+      await NativeQuicClient.h3Disconnect();
+      console.log('[H3Client] Disconnected');
+    }
+  }
+}
+
+/**
+ * Get HTTP/3 client for the local eStream server
+ */
+export function getH3Client(serverAddr: string = '10.0.0.120:8443'): H3Client {
+  return new H3Client(serverAddr);
 }
 

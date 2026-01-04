@@ -872,46 +872,39 @@ export default function DevTools() {
       }
     }
 
-    // Test 15: NFT Metadata Generation
+    // Test 15: NFT Minting on eStream
     const startNftMeta = Date.now();
-    updateTest('NFT Metadata', { status: 'running', message: 'Generating...' });
+    updateTest('NFT Metadata', { status: 'running', message: 'Minting on eStream...' });
     try {
-      const nftService = getNftMintService('devnet');
+      const nftService = getNftMintService('localnet');
       const testPubkeyForNft = localKeyPair ? bs58.encode(localKeyPair.publicKey) : 'test-pubkey';
       
-      // Generate all three NFT types
-      const identityMeta = nftService.createEstreamIdentityMetadata(
+      // Mint an Identity NFT on eStream
+      const mintResult = await nftService.mintIdentityNft(
         testPubkeyForNft,
         'Hardware',
-        'Dec 2024',
-        6,
+        'Jan 2026',
+        8,
         1247
       );
       
-      const portfolioMeta = nftService.createTakeTitlePortfolioMetadata(
-        testPubkeyForNft,
-        3,
-        12400,
-        2,
-        45000
-      );
-      
-      const assetMeta = nftService.createTakeTitleAssetMetadata(
-        'TT-2024-001#3',
-        '123 Main St, Austin TX',
-        'Single Family Residential',
-        'For Sale',
-        1000,
-        47
-      );
-      
-      updateTest('NFT Metadata', { 
-        status: 'pass', 
-        message: 'Generated 3 NFT types',
-        details: `Identity: ${identityMeta.symbol}, Portfolio: ${portfolioMeta.symbol}, Asset: ${assetMeta.symbol}`,
-        duration: Date.now() - startNftMeta
-      });
-      log('✓ NFT Metadata: Generated ESTREAM, TTPORT, DEED');
+      if (mintResult.success) {
+        updateTest('NFT Metadata', { 
+          status: 'pass', 
+          message: '🎉 NFT minted on eStream!',
+          details: `ID: ${mintResult.mintAddress?.substring(0, 16)}...`,
+          duration: Date.now() - startNftMeta
+        });
+        log('✓ NFT Minted on eStream! ID: ' + mintResult.mintAddress);
+      } else {
+        updateTest('NFT Metadata', { 
+          status: 'fail', 
+          message: 'Mint failed',
+          details: mintResult.error,
+          duration: Date.now() - startNftMeta
+        });
+        log('✗ NFT Mint failed: ' + mintResult.error);
+      }
     } catch (e) {
       updateTest('NFT Metadata', { 
         status: 'fail', 
@@ -926,7 +919,7 @@ export default function DevTools() {
     const startAirdrop = Date.now();
     updateTest('NFT Airdrop', { status: 'running', message: 'Requesting SOL...' });
     try {
-      const nftService = getNftMintService('devnet');
+      const nftService = getNftMintService('localnet');
       const testPubkey = localKeyPair ? bs58.encode(localKeyPair.publicKey) : null;
       
       if (!testPubkey) {
@@ -1066,11 +1059,11 @@ export default function DevTools() {
         });
         log('⊘ QUIC Connect skipped (no handle)');
       } else {
-        // Connect directly to estream node over WiFi
-        // Mac's local IP with Docker-exposed QUIC port
-        const ESTREAM_QUIC_ADDR = '192.168.30.162:5001'; // Maps to Docker port 5000 (QUIC)
-        log(`Connecting to ${ESTREAM_QUIC_ADDR}...`);
-        await QuicClient.connect(quicHandle, ESTREAM_QUIC_ADDR);
+        // Connect directly to estream node over WiFi via HTTP/3
+        // Mac's local IP with HTTP/3 port (UDP)
+        const ESTREAM_H3_ADDR = '10.0.0.120:8443'; // HTTP/3 (UDP)
+        log(`Connecting via HTTP/3 to ${ESTREAM_H3_ADDR}...`);
+        await QuicClient.h3Connect(ESTREAM_H3_ADDR);
         
         updateTest('QUIC Connect', {
           status: 'pass',

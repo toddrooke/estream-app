@@ -22,6 +22,9 @@ target 'EstreamApp' do
     # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
+  
+  # eStream Mobile SDK - Post-quantum cryptography
+  pod 'EStreamMobile', :path => '.'
 
   target 'EstreamAppTests' do
     inherit! :complete

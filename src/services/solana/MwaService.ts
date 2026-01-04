@@ -9,15 +9,31 @@
  * 
  * This replaces our custom SeekerModule with the official SDK.
  * See: https://github.com/solana-mobile/mobile-wallet-adapter
+ * 
+ * NOTE: MWA is Android-only (Saga/Seeker hardware).
+ * On iOS, this module provides stub implementations.
  */
 
-import {
-  transact,
-  Web3MobileWallet,
-} from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { Platform } from 'react-native';
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { Buffer } from 'buffer';
+
+// MWA is Android-only - conditionally import to avoid iOS crashes
+let transact: any;
+let Web3MobileWallet: any;
+
+if (Platform.OS === 'android') {
+  try {
+    const mwa = require('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+    transact = mwa.transact;
+    Web3MobileWallet = mwa.Web3MobileWallet;
+  } catch (e) {
+    console.warn('[MwaService] Failed to load MWA:', e);
+  }
+}
+
+const MWA_AVAILABLE = Platform.OS === 'android' && !!transact;
 
 /**
  * Decode a Base64-encoded address to a PublicKey.
@@ -86,11 +102,22 @@ export class MwaService {
   }
 
   /**
+   * Check if MWA is available on this platform.
+   */
+  static isAvailable(): boolean {
+    return MWA_AVAILABLE;
+  }
+
+  /**
    * Authorize with the wallet and get a session token.
    * This will open the wallet app for user approval.
    */
   async authorize(): Promise<AuthorizationResult> {
-    const result = await transact(async (wallet: Web3MobileWallet) => {
+    if (!MWA_AVAILABLE) {
+      throw new Error('Mobile Wallet Adapter is only available on Android (Saga/Seeker). Use PqCryptoModule for iOS signing.');
+    }
+    
+    const result = await transact(async (wallet: any) => {
       // Request authorization
       const authResult = await wallet.authorize({
         cluster: this.getClusterRpcName(),
@@ -123,12 +150,16 @@ export class MwaService {
    * Faster than full authorization.
    */
   async reauthorize(): Promise<AuthorizationResult | null> {
+    if (!MWA_AVAILABLE) {
+      return null;
+    }
+    
     if (!this.cachedAuthToken) {
       return null;
     }
 
     try {
-      const result = await transact(async (wallet: Web3MobileWallet) => {
+      const result = await transact(async (wallet: any) => {
         const authResult = await wallet.reauthorize({
           auth_token: this.cachedAuthToken!,
           identity: this.config.appIdentity!,
@@ -163,12 +194,14 @@ export class MwaService {
    * Deauthorize and clear the session.
    */
   async deauthorize(): Promise<void> {
-    if (!this.cachedAuthToken) {
+    if (!MWA_AVAILABLE || !this.cachedAuthToken) {
+      this.cachedAuthToken = null;
+      this.cachedPublicKey = null;
       return;
     }
 
     try {
-      await transact(async (wallet: Web3MobileWallet) => {
+      await transact(async (wallet: any) => {
         await wallet.deauthorize({ auth_token: this.cachedAuthToken! });
       });
     } finally {
@@ -185,7 +218,11 @@ export class MwaService {
    * We use reauthorize() if we have a cached token, otherwise authorize().
    */
   async signMessage(message: Uint8Array): Promise<SignResult> {
-    const result = await transact(async (wallet: Web3MobileWallet) => {
+    if (!MWA_AVAILABLE) {
+      throw new Error('Mobile Wallet Adapter is only available on Android. Use PqCryptoModule for iOS signing.');
+    }
+    
+    const result = await transact(async (wallet: any) => {
       let publicKey: PublicKey;
       let base64Address: string;
       
@@ -244,7 +281,11 @@ export class MwaService {
    * Sign a transaction with the wallet.
    */
   async signTransaction(transaction: Transaction | VersionedTransaction): Promise<Transaction | VersionedTransaction> {
-    const result = await transact(async (wallet: Web3MobileWallet) => {
+    if (!MWA_AVAILABLE) {
+      throw new Error('Mobile Wallet Adapter is only available on Android. Use PqCryptoModule for iOS signing.');
+    }
+    
+    const result = await transact(async (wallet: any) => {
       // Reauthorize or authorize
       let authToken = this.cachedAuthToken;
       let publicKey = this.cachedPublicKey;
@@ -283,7 +324,11 @@ export class MwaService {
     transaction: Transaction | VersionedTransaction,
     options?: { minContextSlot?: number }
   ): Promise<string> {
-    const result = await transact(async (wallet: Web3MobileWallet) => {
+    if (!MWA_AVAILABLE) {
+      throw new Error('Mobile Wallet Adapter is only available on Android. Use PqCryptoModule for iOS signing.');
+    }
+    
+    const result = await transact(async (wallet: any) => {
       // Reauthorize or authorize
       let authToken = this.cachedAuthToken;
       let publicKey = this.cachedPublicKey;

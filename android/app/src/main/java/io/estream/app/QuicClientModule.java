@@ -202,6 +202,96 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
         }
     }
 
+    // ============================================================================
+    // Native Estream Methods
+    // ============================================================================
+
+    @ReactMethod
+    public void estreamCreate(String appId, double typeNum, String resource, String payloadBase64, Promise promise) {
+        android.util.Log.i(TAG, "estreamCreate() called for app=" + appId + " type=" + typeNum);
+        try {
+            byte[] payload = android.util.Base64.decode(payloadBase64, android.util.Base64.DEFAULT);
+            byte[] result = nativeEstreamCreate(appId, (long) typeNum, resource, payload);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            android.util.Log.i(TAG, "estreamCreate() success: " + json.length() + " bytes");
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "estreamCreate() failed: " + e.getMessage(), e);
+            promise.reject("ESTREAM_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void estreamSign(String estreamJson, double deviceKeysHandle, Promise promise) {
+        android.util.Log.i(TAG, "estreamSign() called");
+        try {
+            byte[] estreamBytes = estreamJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] result = nativeEstreamSign(estreamBytes, (long) deviceKeysHandle);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            android.util.Log.i(TAG, "estreamSign() success");
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "estreamSign() failed: " + e.getMessage(), e);
+            promise.reject("ESTREAM_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void estreamVerify(String estreamJson, Promise promise) {
+        android.util.Log.i(TAG, "estreamVerify() called");
+        try {
+            byte[] estreamBytes = estreamJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            long result = nativeEstreamVerify(estreamBytes);
+            promise.resolve(result == 1);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "estreamVerify() failed: " + e.getMessage(), e);
+            promise.reject("ESTREAM_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void estreamParse(String estreamJson, Promise promise) {
+        android.util.Log.i(TAG, "estreamParse() called");
+        try {
+            byte[] estreamBytes = estreamJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] result = nativeEstreamParse(estreamBytes);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "estreamParse() failed: " + e.getMessage(), e);
+            promise.reject("ESTREAM_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void estreamToMsgpack(String estreamJson, Promise promise) {
+        android.util.Log.i(TAG, "estreamToMsgpack() called");
+        try {
+            byte[] estreamBytes = estreamJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] msgpack = nativeEstreamToMsgpack(estreamBytes);
+            String base64 = android.util.Base64.encodeToString(msgpack, android.util.Base64.NO_WRAP);
+            android.util.Log.i(TAG, "estreamToMsgpack() success: " + msgpack.length + " bytes");
+            promise.resolve(base64);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "estreamToMsgpack() failed: " + e.getMessage(), e);
+            promise.reject("ESTREAM_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void estreamFromMsgpack(String msgpackBase64, Promise promise) {
+        android.util.Log.i(TAG, "estreamFromMsgpack() called");
+        try {
+            byte[] msgpack = android.util.Base64.decode(msgpackBase64, android.util.Base64.DEFAULT);
+            byte[] result = nativeEstreamFromMsgpack(msgpack);
+            String json = new String(result, java.nio.charset.StandardCharsets.UTF_8);
+            promise.resolve(json);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "estreamFromMsgpack() failed: " + e.getMessage(), e);
+            promise.reject("ESTREAM_ERROR", e.getMessage(), e);
+        }
+    }
+
     // Native methods
     // NOTE: These signatures MUST match the JNI function signatures in the Rust code
     // The Rust code returns jbyteArray (byte[]), not jstring (String)
@@ -217,5 +307,13 @@ public class QuicClientModule extends ReactContextBaseJavaModule {
     private native byte[] nativeH3Get(String path);
     private native long nativeH3IsConnected();
     private native void nativeH3Disconnect();
+
+    // Estream native methods
+    private native byte[] nativeEstreamCreate(String appId, long typeNum, String resource, byte[] payload);
+    private native byte[] nativeEstreamSign(byte[] estreamJson, long deviceKeysHandle);
+    private native long nativeEstreamVerify(byte[] estreamJson);
+    private native byte[] nativeEstreamParse(byte[] estreamJson);
+    private native byte[] nativeEstreamToMsgpack(byte[] estreamJson);
+    private native byte[] nativeEstreamFromMsgpack(byte[] msgpack);
 }
 

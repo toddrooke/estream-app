@@ -5,7 +5,7 @@
  */
 
 import nacl from 'tweetnacl';
-import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
 
 /**
  * SHA256 hash function.

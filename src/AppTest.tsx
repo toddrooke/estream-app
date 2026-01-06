@@ -1,7 +1,7 @@
 /**
- * eStream Mobile App
+ * eStream Test App
  * 
- * React Native client for the eStream network with native estream support.
+ * Simplified version for testing native estream support without vault dependencies.
  */
 
 import React, { useState, useCallback } from 'react';
@@ -11,18 +11,13 @@ import {
   StyleSheet, 
   Text, 
   View, 
-  ActivityIndicator,
   TouchableOpacity,
   ScrollView,
   TextInput,
-  Alert,
+  ActivityIndicator,
 } from 'react-native';
-import { VaultProvider, useVault, useTrustBadge } from '@/services/vault';
 import { EstreamEventLog } from '@/components/EstreamEventLog';
 import { EstreamService } from '@/services/estream';
-
-// Default node URL (can be overridden via config)
-const DEFAULT_NODE_URL = 'http://localhost:8080';
 
 // Estream types for the app
 const ESTREAM_TYPES = {
@@ -56,29 +51,7 @@ function EstreamTestPanel(): React.JSX.Element {
       
       // Get info
       const info = await EstreamService.parse(estream);
-      setLastResult(`Created ${typeName}: ${info.content_id.substring(0, 16)}...`);
-      
-    } catch (error: any) {
-      setLastResult(`Error: ${error.message}`);
-      Alert.alert('Error', error.message);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [resource, payload]);
-
-  const handleSignAndEmit = useCallback(async () => {
-    setIsCreating(true);
-    setLastResult(null);
-    
-    try {
-      const result = await EstreamService.createAndEmit(
-        'io.estream.app',
-        ESTREAM_TYPES.MESSAGE,
-        resource,
-        payload
-      );
-      
-      setLastResult(`Emitted: ${result.content_id.substring(0, 16)}...`);
+      setLastResult(`Created ${typeName}: ${info.content_id?.substring(0, 16) || 'pending'}...`);
       
     } catch (error: any) {
       setLastResult(`Error: ${error.message}`);
@@ -124,7 +97,7 @@ function EstreamTestPanel(): React.JSX.Element {
         `✅ Roundtrip complete!\n` +
         `Signature: ${valid ? 'VALID' : 'INVALID'}\n` +
         `MsgPack: ${msgpack.length} chars\n` +
-        `ID: ${info.content_id.substring(0, 16)}...`
+        `ID: ${info.content_id?.substring(0, 16) || 'unknown'}...`
       );
       
     } catch (error: any) {
@@ -136,7 +109,7 @@ function EstreamTestPanel(): React.JSX.Element {
 
   return (
     <View style={styles.testPanel}>
-      <Text style={styles.panelTitle}>Native Estream Test</Text>
+      <Text style={styles.panelTitle}>🔧 Native Estream Test</Text>
       
       <View style={styles.inputGroup}>
         <Text style={styles.inputLabel}>Resource</Text>
@@ -167,7 +140,7 @@ function EstreamTestPanel(): React.JSX.Element {
           onPress={() => handleCreate(ESTREAM_TYPES.MESSAGE, 'Message')}
           disabled={isCreating}
         >
-          <Text style={styles.buttonText}>Message</Text>
+          <Text style={styles.buttonText}>📨 Message</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
@@ -175,7 +148,7 @@ function EstreamTestPanel(): React.JSX.Element {
           onPress={() => handleCreate(ESTREAM_TYPES.NFT, 'NFT')}
           disabled={isCreating}
         >
-          <Text style={styles.buttonText}>NFT</Text>
+          <Text style={styles.buttonText}>🎨 NFT</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
@@ -183,19 +156,7 @@ function EstreamTestPanel(): React.JSX.Element {
           onPress={() => handleCreate(ESTREAM_TYPES.DEBUG, 'Debug')}
           disabled={isCreating}
         >
-          <Text style={styles.buttonText}>Debug</Text>
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.buttonRow}>
-        <TouchableOpacity 
-          style={[styles.button, styles.emitBtn, { flex: 1 }]}
-          onPress={handleSignAndEmit}
-          disabled={isCreating}
-        >
-          <Text style={styles.buttonText}>
-            {isCreating ? 'Working...' : '🚀 Sign & Emit'}
-          </Text>
+          <Text style={styles.buttonText}>🔍 Debug</Text>
         </TouchableOpacity>
       </View>
       
@@ -205,7 +166,7 @@ function EstreamTestPanel(): React.JSX.Element {
         disabled={isCreating}
       >
         <Text style={styles.buttonText}>
-          {isCreating ? 'Testing...' : '🔄 Full Roundtrip Test'}
+          {isCreating ? '⏳ Testing...' : '🔄 Full Roundtrip Test (Create → Sign → Verify → MsgPack)'}
         </Text>
       </TouchableOpacity>
       
@@ -223,93 +184,35 @@ function EstreamTestPanel(): React.JSX.Element {
 }
 
 /**
- * Main app content with vault integration
+ * Main Test App
  */
-function AppContent(): React.JSX.Element {
-  const { isLoading, isAvailable, publicKey, error } = useVault();
-  const trustBadge = useTrustBadge();
-
-  if (isLoading) {
-    return (
-      <View style={styles.content}>
-        <ActivityIndicator size="large" color="#4a9eff" />
-        <Text style={styles.loadingText}>Initializing vault...</Text>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.content}>
-        <Text style={styles.errorIcon}>⚠️</Text>
-        <Text style={styles.errorText}>Vault Error</Text>
-        <Text style={styles.errorDetail}>{error.message}</Text>
-      </View>
-    );
-  }
-
+function AppTest(): React.JSX.Element {
   return (
-    <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>eStream</Text>
-        <Text style={styles.subtitle}>Verifiable Data Streaming</Text>
-        
-        {/* Trust Badge */}
-        <View style={[styles.trustBadge, { backgroundColor: getBadgeColor(trustBadge.color) }]}>
-          <Text style={styles.trustIcon}>{trustBadge.icon}</Text>
-          <Text style={styles.trustLabel}>{trustBadge.label}</Text>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>eStream</Text>
+          <Text style={styles.subtitle}>Native Estream Test Mode</Text>
+          
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>🧪 Test Mode</Text>
+          </View>
         </View>
         
-        {/* Public Key */}
-        {publicKey && (
-          <View style={styles.keySection}>
-            <Text style={styles.keyLabel}>Public Key</Text>
-            <Text style={styles.keyValue}>
-              {publicKey.substring(0, 8)}...{publicKey.substring(publicKey.length - 8)}
-            </Text>
-          </View>
-        )}
-      </View>
-      
-      {/* Test Panel */}
-      <EstreamTestPanel />
-      
-      {/* Event Log */}
-      <View style={styles.eventLogContainer}>
-        <EstreamEventLog maxHeight={350} />
-      </View>
-      
-      <Text style={styles.version}>v0.2.0 - Native Estream</Text>
-    </ScrollView>
+        {/* Test Panel */}
+        <EstreamTestPanel />
+        
+        {/* Event Log */}
+        <View style={styles.eventLogContainer}>
+          <EstreamEventLog maxHeight={350} />
+        </View>
+        
+        <Text style={styles.version}>v0.2.0 - Native Estream SDK</Text>
+      </ScrollView>
+    </SafeAreaView>
   );
-}
-
-/**
- * Root app component with providers
- */
-function App(): React.JSX.Element {
-  return (
-    <VaultProvider nodeUrl={DEFAULT_NODE_URL}>
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <AppContent />
-      </SafeAreaView>
-    </VaultProvider>
-  );
-}
-
-/**
- * Map badge color names to actual colors
- */
-function getBadgeColor(color: string): string {
-  switch (color) {
-    case 'gold': return '#d4af37';
-    case 'green': return '#22c55e';
-    case 'orange': return '#f97316';
-    case 'red': return '#ef4444';
-    default: return '#6b7280';
-  }
 }
 
 const styles = StyleSheet.create({
@@ -324,12 +227,6 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
   header: {
     alignItems: 'center',
     marginBottom: 20,
@@ -343,67 +240,24 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#888888',
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  badge: {
+    backgroundColor: '#f97316',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  badgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   version: {
     fontSize: 12,
     color: '#666666',
     textAlign: 'center',
     marginTop: 20,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#888888',
-  },
-  errorIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  errorText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#ef4444',
-    marginBottom: 8,
-  },
-  errorDetail: {
-    fontSize: 14,
-    color: '#888888',
-    textAlign: 'center',
-  },
-  trustBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginBottom: 16,
-  },
-  trustIcon: {
-    fontSize: 14,
-    marginRight: 6,
-  },
-  trustLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  keySection: {
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  keyLabel: {
-    fontSize: 10,
-    color: '#666666',
-    marginBottom: 2,
-  },
-  keyValue: {
-    fontSize: 12,
-    fontFamily: 'monospace',
-    color: '#4a9eff',
   },
   // Test Panel
   testPanel: {
@@ -446,7 +300,7 @@ const styles = StyleSheet.create({
   },
   button: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -458,9 +312,6 @@ const styles = StyleSheet.create({
   },
   debugBtn: {
     backgroundColor: '#64748b',
-  },
-  emitBtn: {
-    backgroundColor: '#f97316',
   },
   testBtn: {
     backgroundColor: '#3b82f6',
@@ -489,4 +340,5 @@ const styles = StyleSheet.create({
   },
 });
 
-export default App;
+export default AppTest;
+

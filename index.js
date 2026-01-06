@@ -17,7 +17,8 @@ global.Buffer = Buffer;
 // No polyfill needed
 
 import {AppRegistry} from 'react-native';
-import App from './App'; // Back to original App
+// import App from './src/App'; // Main App with estream support
+import App from './src/AppTest'; // Test mode - no vault dependency
 import {name as appName} from './app.json';
 
 AppRegistry.registerComponent(appName, () => App);

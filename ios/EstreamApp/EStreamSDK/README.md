@@ -71,3 +71,4 @@ let decrypted = try await ratchet.decrypt(encryptedJson)
 - ML-DSA-87 (Dilithium5) - FIPS 204 compliant
 - Pure Rust implementation - no C dependencies for core crypto
 
+

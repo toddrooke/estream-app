@@ -67,22 +67,38 @@ export class SoftwareVaultService implements VaultService {
     try {
       const stored = await AsyncStorage.getItem(storageKey);
       
-      if (stored) {
-        const secretKey = bs58.decode(stored);
-        this.cachedKeyPair = nacl.sign.keyPair.fromSecretKey(secretKey);
-        return this.cachedKeyPair;
+      if (stored && stored.length > 0) {
+        try {
+          const secretKey = bs58.decode(stored);
+          if (secretKey.length === 64) {
+            this.cachedKeyPair = nacl.sign.keyPair.fromSecretKey(secretKey);
+            console.log('[SoftwareVault] Loaded existing keypair');
+            return this.cachedKeyPair;
+          } else {
+            console.warn('[SoftwareVault] Invalid key length, regenerating...');
+          }
+        } catch (decodeError) {
+          console.warn('[SoftwareVault] Corrupted key data, regenerating...', decodeError);
+          // Delete corrupted data
+          await AsyncStorage.removeItem(storageKey);
+        }
       }
     } catch (error) {
-      console.warn('Failed to load keypair:', error);
+      console.warn('[SoftwareVault] Failed to load keypair:', error);
     }
 
     // Generate new keypair
-    console.log('Generating new software keypair...');
+    console.log('[SoftwareVault] Generating new keypair...');
     this.cachedKeyPair = nacl.sign.keyPair();
     
     // Store secret key
-    await AsyncStorage.setItem(storageKey, bs58.encode(this.cachedKeyPair.secretKey));
-    console.log('Keypair stored:', bs58.encode(this.cachedKeyPair.publicKey).substring(0, 8) + '...');
+    try {
+      await AsyncStorage.setItem(storageKey, bs58.encode(this.cachedKeyPair.secretKey));
+      console.log('[SoftwareVault] Keypair stored:', bs58.encode(this.cachedKeyPair.publicKey).substring(0, 8) + '...');
+    } catch (storeError) {
+      console.error('[SoftwareVault] Failed to store keypair:', storeError);
+      // Continue anyway - key is in memory
+    }
     
     return this.cachedKeyPair;
   }

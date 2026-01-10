@@ -1,300 +1,222 @@
 /**
  * eStream Mobile App
  * 
- * React Native client for the eStream network with native estream support.
+ * Clean, production-ready UI with tabbed navigation.
+ * Developer tools moved to dedicated tab.
  */
 
-import React, { useState, useCallback } from 'react';
+import React from 'react';
 import { 
   SafeAreaView, 
   StatusBar, 
   StyleSheet, 
   Text, 
   View, 
-  ActivityIndicator,
   TouchableOpacity,
   ScrollView,
-  TextInput,
-  Alert,
 } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { VaultProvider, useVault, useTrustBadge } from '@/services/vault';
-import { EstreamEventLog } from '@/components/EstreamEventLog';
-import { EstreamService } from '@/services/estream';
 
-// Default node URL (can be overridden via config)
+// Screens
+import DevTools from '@/screens/DevTools';
+import GovernanceScreen from '@/screens/GovernanceScreen';
+import ScanScreen from '@/screens/ScanScreen';
+
+const Tab = createBottomTabNavigator();
+
+// Default node URL
 const DEFAULT_NODE_URL = 'http://localhost:8080';
 
-// Estream types for the app
-const ESTREAM_TYPES = {
-  MESSAGE: 0x0001,
-  NFT: 0x0002,
-  MEDIA: 0x0003,
-  STATUS: 0x0010,
-  DEBUG: 0x00FF,
-};
-
 /**
- * Test Panel for creating and viewing estreams
+ * Home Screen - Clean status overview
  */
-function EstreamTestPanel(): React.JSX.Element {
-  const [resource, setResource] = useState('test:demo');
-  const [payload, setPayload] = useState('Hello from eStream app!');
-  const [isCreating, setIsCreating] = useState(false);
-  const [lastResult, setLastResult] = useState<string | null>(null);
-
-  const handleCreate = useCallback(async (typeNum: number, typeName: string) => {
-    setIsCreating(true);
-    setLastResult(null);
-    
-    try {
-      const estream = await EstreamService.create(
-        'io.estream.app',
-        typeNum,
-        resource,
-        payload
-      );
-      
-      // Get info
-      const info = await EstreamService.parse(estream);
-      setLastResult(`Created ${typeName}: ${info.content_id.substring(0, 16)}...`);
-      
-    } catch (error: any) {
-      setLastResult(`Error: ${error.message}`);
-      Alert.alert('Error', error.message);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [resource, payload]);
-
-  const handleSignAndEmit = useCallback(async () => {
-    setIsCreating(true);
-    setLastResult(null);
-    
-    try {
-      const result = await EstreamService.createAndEmit(
-        'io.estream.app',
-        ESTREAM_TYPES.MESSAGE,
-        resource,
-        payload
-      );
-      
-      setLastResult(`Emitted: ${result.content_id.substring(0, 16)}...`);
-      
-    } catch (error: any) {
-      setLastResult(`Error: ${error.message}`);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [resource, payload]);
-
-  const handleTestRoundtrip = useCallback(async () => {
-    setIsCreating(true);
-    setLastResult(null);
-    
-    try {
-      // 1. Create
-      console.log('[Test] Creating estream...');
-      const estream = await EstreamService.create(
-        'io.estream.app',
-        ESTREAM_TYPES.DEBUG,
-        'test:roundtrip',
-        JSON.stringify({ timestamp: Date.now(), test: true })
-      );
-      
-      // 2. Sign
-      console.log('[Test] Signing...');
-      const signed = await EstreamService.sign(estream);
-      
-      // 3. Verify
-      console.log('[Test] Verifying...');
-      const valid = await EstreamService.verify(signed);
-      
-      // 4. Convert to msgpack
-      console.log('[Test] Converting to msgpack...');
-      const msgpack = await EstreamService.toMsgpack(signed);
-      
-      // 5. Parse from msgpack
-      console.log('[Test] Parsing from msgpack...');
-      const parsed = await EstreamService.fromMsgpack(msgpack);
-      
-      // 6. Get info
-      const info = await EstreamService.parse(parsed);
-      
-      setLastResult(
-        `✅ Roundtrip complete!\n` +
-        `Signature: ${valid ? 'VALID' : 'INVALID'}\n` +
-        `MsgPack: ${msgpack.length} chars\n` +
-        `ID: ${info.content_id.substring(0, 16)}...`
-      );
-      
-    } catch (error: any) {
-      setLastResult(`Error: ${error.message}`);
-    } finally {
-      setIsCreating(false);
-    }
-  }, []);
-
-  return (
-    <View style={styles.testPanel}>
-      <Text style={styles.panelTitle}>Native Estream Test</Text>
-      
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Resource</Text>
-        <TextInput
-          style={styles.input}
-          value={resource}
-          onChangeText={setResource}
-          placeholder="resource:id"
-          placeholderTextColor="#666"
-        />
-      </View>
-      
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Payload</Text>
-        <TextInput
-          style={[styles.input, styles.payloadInput]}
-          value={payload}
-          onChangeText={setPayload}
-          placeholder="Enter payload..."
-          placeholderTextColor="#666"
-          multiline
-        />
-      </View>
-      
-      <View style={styles.buttonRow}>
-        <TouchableOpacity 
-          style={[styles.button, styles.messageBtn]}
-          onPress={() => handleCreate(ESTREAM_TYPES.MESSAGE, 'Message')}
-          disabled={isCreating}
-        >
-          <Text style={styles.buttonText}>Message</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.nftBtn]}
-          onPress={() => handleCreate(ESTREAM_TYPES.NFT, 'NFT')}
-          disabled={isCreating}
-        >
-          <Text style={styles.buttonText}>NFT</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.debugBtn]}
-          onPress={() => handleCreate(ESTREAM_TYPES.DEBUG, 'Debug')}
-          disabled={isCreating}
-        >
-          <Text style={styles.buttonText}>Debug</Text>
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.buttonRow}>
-        <TouchableOpacity 
-          style={[styles.button, styles.emitBtn, { flex: 1 }]}
-          onPress={handleSignAndEmit}
-          disabled={isCreating}
-        >
-          <Text style={styles.buttonText}>
-            {isCreating ? 'Working...' : '🚀 Sign & Emit'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      
-      <TouchableOpacity 
-        style={[styles.button, styles.testBtn]}
-        onPress={handleTestRoundtrip}
-        disabled={isCreating}
-      >
-        <Text style={styles.buttonText}>
-          {isCreating ? 'Testing...' : '🔄 Full Roundtrip Test'}
-        </Text>
-      </TouchableOpacity>
-      
-      {isCreating && (
-        <ActivityIndicator style={styles.spinner} color="#4a9eff" />
-      )}
-      
-      {lastResult && (
-        <View style={styles.resultBox}>
-          <Text style={styles.resultText}>{lastResult}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-/**
- * Main app content with vault integration
- */
-function AppContent(): React.JSX.Element {
-  const { isLoading, isAvailable, publicKey, error } = useVault();
+function HomeScreen(): React.JSX.Element {
+  const { publicKey, error, isLoading } = useVault();
   const trustBadge = useTrustBadge();
 
-  if (isLoading) {
-    return (
-      <View style={styles.content}>
-        <ActivityIndicator size="large" color="#4a9eff" />
-        <Text style={styles.loadingText}>Initializing vault...</Text>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.content}>
-        <Text style={styles.errorIcon}>⚠️</Text>
-        <Text style={styles.errorText}>Vault Error</Text>
-        <Text style={styles.errorDetail}>{error.message}</Text>
-      </View>
-    );
-  }
-
   return (
-    <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>eStream</Text>
-        <Text style={styles.subtitle}>Verifiable Data Streaming</Text>
-        
+    <SafeAreaView style={styles.container}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.logo}>⬡</Text>
+          <Text style={styles.title}>eStream</Text>
+          <Text style={styles.subtitle}>Verifiable Data Streaming</Text>
+        </View>
+
+        {/* Error Display */}
+        {error && (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>⚠️ Vault Error</Text>
+            <Text style={styles.errorText}>{error.message}</Text>
+          </View>
+        )}
+
         {/* Trust Badge */}
         <View style={[styles.trustBadge, { backgroundColor: getBadgeColor(trustBadge.color) }]}>
           <Text style={styles.trustIcon}>{trustBadge.icon}</Text>
-          <Text style={styles.trustLabel}>{trustBadge.label}</Text>
+          <Text style={styles.trustLabel}>{isLoading ? 'Loading...' : trustBadge.label}</Text>
         </View>
-        
-        {/* Public Key */}
-        {publicKey && (
-          <View style={styles.keySection}>
-            <Text style={styles.keyLabel}>Public Key</Text>
-            <Text style={styles.keyValue}>
-              {publicKey.substring(0, 8)}...{publicKey.substring(publicKey.length - 8)}
+
+        {/* Identity Card */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Your Identity</Text>
+          {publicKey ? (
+            <View style={styles.keyDisplay}>
+              <Text style={styles.keyLabel}>Public Key</Text>
+              <Text style={styles.keyValue}>
+                {publicKey.substring(0, 12)}...{publicKey.substring(publicKey.length - 8)}
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.emptyText}>Initializing...</Text>
+          )}
+        </View>
+
+        {/* Status Cards */}
+        <View style={styles.statusGrid}>
+          <View style={styles.statusCard}>
+            <Text style={styles.statusValue}>0</Text>
+            <Text style={styles.statusLabel}>Pending Requests</Text>
+          </View>
+          <View style={styles.statusCard}>
+            <Text style={styles.statusValue}>—</Text>
+            <Text style={styles.statusLabel}>Network Status</Text>
+          </View>
+        </View>
+
+        {/* Governance Actions */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Governance</Text>
+          <Text style={styles.emptyText}>
+            No pending signing requests.{'\n'}
+            Requests from the CLI will appear here.
+          </Text>
+        </View>
+
+        {/* Recent Activity */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Recent Activity</Text>
+          <Text style={styles.emptyText}>No recent activity</Text>
+        </View>
+
+        <Text style={styles.version}>v0.3.0</Text>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// GovernanceScreen is imported from @/screens/GovernanceScreen
+
+/**
+ * Settings Screen
+ */
+function SettingsScreen(): React.JSX.Element {
+  const { publicKey } = useVault();
+  const trustBadge = useTrustBadge();
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <Text style={styles.screenTitle}>⚙️ Settings</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Security</Text>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Trust Level</Text>
+            <View style={[styles.settingBadge, { backgroundColor: getBadgeColor(trustBadge.color) }]}>
+              <Text style={styles.settingBadgeText}>{trustBadge.label}</Text>
+            </View>
+          </View>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Signing Algorithm</Text>
+            <Text style={styles.settingValue}>ML-DSA-87</Text>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Identity</Text>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Public Key</Text>
+            <Text style={styles.settingValueMono}>
+              {publicKey ? `${publicKey.substring(0, 8)}...` : '—'}
             </Text>
           </View>
-        )}
-      </View>
-      
-      {/* Test Panel */}
-      <EstreamTestPanel />
-      
-      {/* Event Log */}
-      <View style={styles.eventLogContainer}>
-        <EstreamEventLog maxHeight={350} />
-      </View>
-      
-      <Text style={styles.version}>v0.2.0 - Native Estream</Text>
-    </ScrollView>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Network</Text>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>CLI Connection</Text>
+            <Text style={styles.settingValue}>Local Network</Text>
+          </View>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Port</Text>
+            <Text style={styles.settingValueMono}>8765</Text>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 /**
- * Root app component with providers
+ * Tab Navigator with icons
+ */
+function TabIcon({ name, focused }: { name: string; focused: boolean }) {
+  const icons: Record<string, string> = {
+    Home: '⬡',
+    Scan: '📷',
+    Governance: '🔐',
+    Developer: '🔧',
+    Settings: '⚙️',
+  };
+  
+  return (
+    <Text style={[styles.tabIcon, focused && styles.tabIconFocused]}>
+      {icons[name] || '○'}
+    </Text>
+  );
+}
+
+/**
+ * Main App with Navigation
+ */
+function AppContent(): React.JSX.Element {
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarStyle: styles.tabBar,
+        tabBarActiveTintColor: '#00ffd5',
+        tabBarInactiveTintColor: '#666',
+        tabBarIcon: ({ focused }) => <TabIcon name={route.name} focused={focused} />,
+        tabBarLabelStyle: styles.tabLabel,
+      })}
+    >
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Scan" component={ScanScreen} />
+      <Tab.Screen name="Governance" component={GovernanceScreen} />
+      <Tab.Screen name="Developer" component={DevTools} />
+      <Tab.Screen name="Settings" component={SettingsScreen} />
+    </Tab.Navigator>
+  );
+}
+
+/**
+ * Root App with providers
  */
 function App(): React.JSX.Element {
   return (
     <VaultProvider nodeUrl={DEFAULT_NODE_URL}>
-      <SafeAreaView style={styles.container}>
+      <NavigationContainer>
         <StatusBar barStyle="light-content" />
         <AppContent />
-      </SafeAreaView>
+      </NavigationContainer>
     </VaultProvider>
   );
 }
@@ -321,171 +243,202 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
+    marginTop: 20,
+  },
+  logo: {
+    fontSize: 48,
+    color: '#00ffd5',
+    marginBottom: 8,
   },
   title: {
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: '#888888',
-    marginBottom: 16,
+    color: '#888',
+    marginTop: 4,
   },
-  version: {
-    fontSize: 12,
-    color: '#666666',
-    textAlign: 'center',
-    marginTop: 20,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#888888',
-  },
-  errorIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  errorText: {
-    fontSize: 24,
+  screenTitle: {
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#ef4444',
-    marginBottom: 8,
-  },
-  errorDetail: {
-    fontSize: 14,
-    color: '#888888',
-    textAlign: 'center',
+    color: '#ffffff',
   },
   trustBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginBottom: 16,
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 24,
   },
   trustIcon: {
-    fontSize: 14,
-    marginRight: 6,
+    fontSize: 16,
+    marginRight: 8,
   },
   trustLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#fff',
   },
-  keySection: {
-    alignItems: 'center',
+  card: {
     backgroundColor: '#1a1a1a',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  keyLabel: {
-    fontSize: 10,
-    color: '#666666',
-    marginBottom: 2,
-  },
-  keyValue: {
-    fontSize: 12,
-    fontFamily: 'monospace',
-    color: '#4a9eff',
-  },
-  // Test Panel
-  testPanel: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 16,
+    padding: 20,
     marginBottom: 16,
   },
-  panelTitle: {
+  cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#fff',
     marginBottom: 16,
   },
-  inputGroup: {
-    marginBottom: 12,
+  keyDisplay: {
+    backgroundColor: '#0f0f0f',
+    borderRadius: 12,
+    padding: 16,
   },
-  inputLabel: {
+  keyLabel: {
     fontSize: 12,
-    color: '#888888',
+    color: '#666',
     marginBottom: 4,
   },
-  input: {
-    backgroundColor: '#0a0a0a',
-    borderRadius: 8,
-    padding: 10,
-    color: '#ffffff',
+  keyValue: {
     fontSize: 14,
+    fontFamily: 'monospace',
+    color: '#00ffd5',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  errorCard: {
+    backgroundColor: '#2a1a1a',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#333333',
+    borderColor: '#ef4444',
   },
-  payloadInput: {
-    minHeight: 60,
-    textAlignVertical: 'top',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 8,
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ef4444',
     marginBottom: 8,
   },
-  button: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  messageBtn: {
-    backgroundColor: '#22c55e',
-  },
-  nftBtn: {
-    backgroundColor: '#a855f7',
-  },
-  debugBtn: {
-    backgroundColor: '#64748b',
-  },
-  emitBtn: {
-    backgroundColor: '#f97316',
-  },
-  testBtn: {
-    backgroundColor: '#3b82f6',
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  spinner: {
-    marginTop: 12,
-  },
-  resultBox: {
-    backgroundColor: '#0a0a0a',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 12,
-  },
-  resultText: {
-    color: '#4ade80',
+  errorText: {
     fontSize: 12,
+    color: '#f87171',
     fontFamily: 'monospace',
   },
-  eventLogContainer: {
+  statusGrid: {
+    flexDirection: 'row',
+    gap: 12,
     marginBottom: 16,
+  },
+  statusCard: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+  },
+  statusValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#00ffd5',
+  },
+  statusLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+  stepList: {
+    gap: 12,
+  },
+  step: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  stepNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#00ffd5',
+    color: '#000',
+    fontSize: 14,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    lineHeight: 28,
+  },
+  stepText: {
+    fontSize: 14,
+    color: '#ccc',
+    flex: 1,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a2a',
+  },
+  settingLabel: {
+    fontSize: 14,
+    color: '#888',
+  },
+  settingValue: {
+    fontSize: 14,
+    color: '#fff',
+  },
+  settingValueMono: {
+    fontSize: 14,
+    fontFamily: 'monospace',
+    color: '#00ffd5',
+  },
+  settingBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  settingBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  version: {
+    fontSize: 12,
+    color: '#444',
+    textAlign: 'center',
+    marginTop: 24,
+  },
+  tabBar: {
+    backgroundColor: '#0f0f0f',
+    borderTopColor: '#1a1a1a',
+    height: 80,
+    paddingBottom: 20,
+  },
+  tabIcon: {
+    fontSize: 24,
+  },
+  tabIconFocused: {
+    transform: [{ scale: 1.1 }],
+  },
+  tabLabel: {
+    fontSize: 11,
+    marginTop: 2,
   },
 });
 

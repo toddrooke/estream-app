@@ -35,6 +35,20 @@ export {
   useTrustBadge 
 } from './VaultContext';
 
+// ML-DSA-87 (Post-Quantum Governance Signing)
+export {
+  MlDsaVaultService,
+  MlDsaKeyPair,
+  MlDsaSignature,
+  GovernanceSignRequest,
+  StubMlDsaService,
+  getMlDsaVaultService,
+  clearMlDsaServiceCache,
+} from './MlDsaVaultService';
+
+// Seeker ML-DSA (Hardware-backed on Android)
+export { SeekerMlDsaService } from './SeekerMlDsaService';
+
 
 
 

@@ -58,21 +58,31 @@ export interface AttestationData {
  */
 export async function getVaultService(): Promise<VaultService> {
   // Try Seeker first (Android)
-  const { SeekerVaultService } = await import('./SeekerVaultService');
-  const seeker = new SeekerVaultService();
-  if (await seeker.isAvailable()) {
-    return seeker;
+  try {
+    const { SeekerVaultService } = await import('./SeekerVaultService');
+    const seeker = new SeekerVaultService();
+    if (await seeker.isAvailable()) {
+      console.log('[VaultService] Using SeekerVaultService');
+      return seeker;
+    }
+  } catch (e) {
+    console.warn('[VaultService] Seeker check failed:', e);
   }
 
   // Try iOS Keychain
-  const { KeychainVaultService } = await import('./KeychainVaultService');
-  const keychain = new KeychainVaultService();
-  if (await keychain.isAvailable()) {
-    return keychain;
+  try {
+    const { KeychainVaultService } = await import('./KeychainVaultService');
+    const keychain = new KeychainVaultService();
+    if (await keychain.isAvailable()) {
+      console.log('[VaultService] Using KeychainVaultService');
+      return keychain;
+    }
+  } catch (e) {
+    console.warn('[VaultService] Keychain check failed:', e);
   }
 
   // Fallback to software vault (dev only)
-  console.warn('No hardware vault available, using software vault (dev only)');
+  console.warn('[VaultService] No hardware vault available, using SoftwareVaultService');
   const { SoftwareVaultService } = await import('./SoftwareVaultService');
   return new SoftwareVaultService();
 }

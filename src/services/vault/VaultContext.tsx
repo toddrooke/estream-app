@@ -74,10 +74,15 @@ export function VaultProvider({ children, nodeUrl }: VaultProviderProps) {
         setApi(client);
         
       } catch (err) {
-        console.error('Failed to initialize vault:', err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error('Failed to initialize vault:', errorMessage);
+        console.error('Full error:', err);
         if (mounted) {
-          setError(err as Error);
+          setError(new Error(`Vault init failed: ${errorMessage}`));
           setIsAvailable(false);
+          // Still allow app to work without vault
+          setTrustLevel(null);
+          setPublicKey(null);
         }
       } finally {
         if (mounted) {

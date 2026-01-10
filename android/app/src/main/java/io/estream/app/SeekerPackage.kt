@@ -6,11 +6,14 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 
 /**
- * SeekerPackage - Registers native modules for hardware vault access.
+ * SeekerPackage - Registers native modules for hardware vault access and CLI signing.
  */
 class SeekerPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(SeekerModule(reactContext))
+        return listOf(
+            SeekerModule(reactContext),
+            SigningServerModule(reactContext)
+        )
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

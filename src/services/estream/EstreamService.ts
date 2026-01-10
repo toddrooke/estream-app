@@ -25,7 +25,7 @@ export interface EstreamInfo {
 
 export interface EstreamEvent {
   id: string;
-  type: 'create' | 'sign' | 'verify' | 'emit' | 'receive' | 'parse' | 'error';
+  type: 'create' | 'sign' | 'verify' | 'emit' | 'receive' | 'parse' | 'error' | 'bridge';
   timestamp: Date;
   contentId?: string;
   typeNum?: number;
@@ -34,6 +34,25 @@ export interface EstreamEvent {
   success: boolean;
   durationMs: number;
   details?: string;
+}
+
+// Bridge-related types
+export interface BridgeStatus {
+  status: 'active' | 'paused' | 'offline';
+  pendingEvents: number;
+  pendingBatches: number;
+  confirmedAnchors: number;
+  lastAnchorSlot?: number;
+}
+
+export interface MerkleProof {
+  eventId: string;
+  batchId: string;
+  merkleRoot: string;
+  proofPath: Array<{ hash: string; position: 'left' | 'right' }>;
+  anchorStatus: 'pending' | 'submitted' | 'confirmed';
+  solanaSlot?: number;
+  solanaSignature?: string;
 }
 
 export type EstreamEventHandler = (event: EstreamEvent) => void;
@@ -353,6 +372,171 @@ class EstreamServiceImpl {
     const result = await this.emit(signed);
     
     return { estream: signed, content_id: result.content_id };
+  }
+
+  // =========================================================================
+  // Bridge Operations (Solana L1 Anchoring)
+  // =========================================================================
+
+  /**
+   * Get bridge status
+   */
+  async getBridgeStatus(): Promise<BridgeStatus> {
+    const start = Date.now();
+    
+    try {
+      console.log(`[Estream] Getting bridge status...`);
+      
+      const resultJson = await QuicClient.h3Get('/api/v1/bridge/status');
+      const status: BridgeStatus = JSON.parse(resultJson);
+      
+      const duration = Date.now() - start;
+      
+      this.emitEvent({
+        type: 'bridge',
+        timestamp: new Date(),
+        success: true,
+        durationMs: duration,
+        details: `Bridge ${status.status}, ${status.pendingEvents} pending events`,
+      });
+      
+      return status;
+    } catch (error: any) {
+      const duration = Date.now() - start;
+      
+      this.emitEvent({
+        type: 'bridge',
+        timestamp: new Date(),
+        success: false,
+        durationMs: duration,
+        details: error.message,
+      });
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Get Merkle proof for an event (for Solana verification)
+   */
+  async getMerkleProof(eventId: string): Promise<MerkleProof> {
+    const start = Date.now();
+    
+    try {
+      console.log(`[Estream] Getting Merkle proof for ${eventId}...`);
+      
+      const resultJson = await QuicClient.h3Get(`/api/v1/bridge/proof/${eventId}`);
+      const proof: MerkleProof = JSON.parse(resultJson);
+      
+      const duration = Date.now() - start;
+      
+      this.emitEvent({
+        type: 'bridge',
+        timestamp: new Date(),
+        contentId: eventId,
+        success: true,
+        durationMs: duration,
+        details: `Proof: ${proof.anchorStatus}${proof.solanaSlot ? ` @ slot ${proof.solanaSlot}` : ''}`,
+      });
+      
+      return proof;
+    } catch (error: any) {
+      const duration = Date.now() - start;
+      
+      this.emitEvent({
+        type: 'bridge',
+        timestamp: new Date(),
+        contentId: eventId,
+        success: false,
+        durationMs: duration,
+        details: error.message,
+      });
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Verify Merkle proof locally
+   */
+  verifyMerkleProof(eventHash: Uint8Array, proof: MerkleProof): boolean {
+    try {
+      // Start with event hash
+      let current = eventHash;
+      
+      for (const node of proof.proofPath) {
+        const sibling = Buffer.from(node.hash, 'hex');
+        
+        // Combine in correct order
+        let combined: Uint8Array;
+        if (node.position === 'left') {
+          combined = Buffer.concat([sibling, current]);
+        } else {
+          combined = Buffer.concat([current, sibling]);
+        }
+        
+        // Hash combined (would use blake3 in production)
+        // For now, just concat for demo
+        current = combined.slice(0, 32);
+      }
+      
+      // Compare with merkle root
+      const expectedRoot = Buffer.from(proof.merkleRoot, 'hex');
+      return Buffer.compare(current, expectedRoot) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Create and emit a bridgeable event (marked for Solana anchoring)
+   */
+  async createAndEmitWithBridge(
+    appId: string,
+    typeNum: number,
+    resource: string,
+    payload: string | Uint8Array,
+    bridgeOptions?: {
+      priority?: 'normal' | 'high';
+      waitForAnchor?: boolean;
+    }
+  ): Promise<{ estream: any; content_id: string; bridgeStatus: string }> {
+    const start = Date.now();
+    
+    // Create and emit normally
+    const { estream, content_id } = await this.createAndEmit(appId, typeNum, resource, payload);
+    
+    // Queue for bridge
+    try {
+      const queueResult = await QuicClient.h3Post('/api/v1/bridge/queue', JSON.stringify({
+        event_id: content_id,
+        priority: bridgeOptions?.priority || 'normal',
+      }));
+      const result = JSON.parse(queueResult);
+      
+      const duration = Date.now() - start;
+      
+      this.emitEvent({
+        type: 'bridge',
+        timestamp: new Date(),
+        contentId: content_id,
+        success: true,
+        durationMs: duration,
+        details: `Queued for bridge (${result.position || 'pending'})`,
+      });
+      
+      // Optionally wait for anchor confirmation
+      if (bridgeOptions?.waitForAnchor) {
+        console.log('[Estream] Waiting for Solana anchor confirmation...');
+        // This would poll or subscribe to confirmation events
+        // For now, return immediately
+      }
+      
+      return { estream, content_id, bridgeStatus: 'queued' };
+    } catch (error: any) {
+      console.warn('[Estream] Bridge queue failed, event still valid on L2:', error.message);
+      return { estream, content_id, bridgeStatus: 'l2-only' };
+    }
   }
 }
 

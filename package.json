@@ -25,8 +25,8 @@
     "android:logs": "adb logcat -s EstreamApp:V"
   },
   "dependencies": {
-    "@estream/react-native": "file:../estream/packages/mobile-sdk/react-native",
     "@craftzdog/react-native-buffer": "^6.1.1",
+    "@estream/react-native": "file:../estream/packages/mobile-sdk/react-native",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/umi": "^1.4.1",
     "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",

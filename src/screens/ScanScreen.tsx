@@ -24,6 +24,7 @@ import {
   PermissionsAndroid,
 } from 'react-native';
 import { QrSigningService } from '@/services/governance';
+import { SparkService, SparkResolution } from '@/services/spark';
 
 // ============================================================================
 // Camera Import (conditional - avoid conditional hook calls)
@@ -308,14 +309,40 @@ export default function ScanScreen(): React.JSX.Element {
     }
   }, [isProcessing, processScannedData]);
 
-  // Complete device registration
+  // Complete device registration via Spark
   const completeRegistration = async (request: ParsedRequest) => {
     setIsProcessing(true);
     
     try {
-      // TODO: Send device public key to callback
-      Alert.alert('✅ Registered', 'Device registration complete!');
-      setLastScanned(null);
+      // Get device public key (in production, use ML-DSA-87)
+      const devicePubkey = 'demo-device-pubkey-' + Date.now();
+      
+      // Create mock resolution from parsed request
+      const resolution: SparkResolution = {
+        version: 1,
+        code: request.inviteCode || '',
+        pubkey: '',
+        payload: {
+          type: 'device-registration',
+          inviteCode: request.inviteCode,
+          orgId: request.orgId,
+        },
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 300000,
+      };
+      
+      const result = await SparkService.completeDeviceRegistration(
+        resolution,
+        devicePubkey,
+        'Seeker Device'
+      );
+      
+      if (result.success) {
+        Alert.alert('✅ Registered', `Device registered!\nID: ${result.deviceId}`);
+        setLastScanned(null);
+      } else {
+        Alert.alert('Error', 'Registration failed: ' + result.error);
+      }
     } catch (error) {
       console.error('[ScanScreen] Registration error:', error);
       Alert.alert('Error', 'Failed to complete registration: ' + String(error));

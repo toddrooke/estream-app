@@ -2,12 +2,11 @@
  * Spark Service
  * 
  * eStream-native Spark scanner and verifier.
- * Uses SHA3-256 + HKDF for motion derivation (matching Mission Control).
+ * Uses deterministic derivation matching Mission Control's spark.ts.
+ * 
+ * Note: Uses simpler hash implementation for React Native compatibility.
+ * The derivation must match Mission Control exactly for liveness verification.
  */
-
-import { sha3_256 } from '@noble/hashes/sha3';
-import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha256';
 
 const PI = Math.PI;
 const PARTICLE_COUNT = 12;
@@ -71,8 +70,8 @@ interface ParticleParams {
  * This mirrors the Mission Control renderer
  */
 export function deriveMotionSeed(pubkeyBytes: Uint8Array, timestamp: number): Uint8Array {
-  const info = new TextEncoder().encode('spark-motion-' + timestamp);
-  return hkdf(sha256, pubkeyBytes.slice(0, 64), undefined, info, 64);
+  // Use the same deriveBytes function as Mission Control
+  return deriveBytes(pubkeyBytes.slice(0, 64), 'spark-motion-' + timestamp, 64);
 }
 
 /**

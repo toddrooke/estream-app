@@ -152,8 +152,9 @@ export class SeekerVaultService implements VaultService {
     const hasKey = await SeekerModule.hasKey(this.keyAlias);
     if (!hasKey) {
       console.log('Generating new key in Seeker Seed Vault...');
-      const publicKeyB58 = await SeekerModule.generateKey(this.keyAlias);
-      console.log('Key generated:', publicKeyB58.substring(0, 8) + '...');
+      // Native module returns Base64-encoded public key
+      const publicKeyB64 = await SeekerModule.generateKey(this.keyAlias);
+      console.log('Key generated:', publicKeyB64.substring(0, 16) + '...');
     }
   }
 
@@ -172,8 +173,9 @@ export class SeekerVaultService implements VaultService {
 
     await this.ensureKey();
 
-    const publicKeyB58 = await SeekerModule.getPublicKey(this.keyAlias);
-    this.cachedPublicKey = bs58.decode(publicKeyB58);
+    // Native module returns Base64-encoded public key
+    const publicKeyB64 = await SeekerModule.getPublicKey(this.keyAlias);
+    this.cachedPublicKey = Uint8Array.from(Buffer.from(publicKeyB64, 'base64'));
     
     return this.cachedPublicKey;
   }

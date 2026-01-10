@@ -2,10 +2,10 @@
  * QR Scanner Screen
  * 
  * Scans QR codes from Mission Control or CLI for governance signing requests.
- * Uses react-native-vision-camera for native QR code scanning.
+ * Uses react-native-vision-camera for native QR code scanning when available.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -22,25 +22,27 @@ import {
 import { QrSigningService } from '@/services/governance';
 
 // ============================================================================
-// Camera Import (conditional)
+// Camera Import (conditional - avoid conditional hook calls)
 // ============================================================================
 
-let Camera: any = null;
-let useCameraDevice: any = null;
-let useCameraPermission: any = null;
-let useCodeScanner: any = null;
+let CameraComponent: React.ComponentType<any> | null = null;
+let useCameraDeviceHook: (() => any) | null = null;
+let useCameraPermissionHook: (() => { hasPermission: boolean; requestPermission: () => Promise<boolean> }) | null = null;
+let useCodeScannerHook: ((config: any) => any) | null = null;
+let CAMERA_AVAILABLE = false;
 
 try {
   const VisionCamera = require('react-native-vision-camera');
-  Camera = VisionCamera.Camera;
-  useCameraDevice = VisionCamera.useCameraDevice;
-  useCameraPermission = VisionCamera.useCameraPermission;
-  useCodeScanner = VisionCamera.useCodeScanner;
+  CameraComponent = VisionCamera.Camera;
+  useCameraDeviceHook = VisionCamera.useCameraDevice;
+  useCameraPermissionHook = VisionCamera.useCameraPermission;
+  useCodeScannerHook = VisionCamera.useCodeScanner;
+  CAMERA_AVAILABLE = true;
+  console.log('[ScanScreen] react-native-vision-camera loaded successfully');
 } catch (e) {
   console.log('[ScanScreen] react-native-vision-camera not available:', e);
+  CAMERA_AVAILABLE = false;
 }
-
-const CAMERA_AVAILABLE = Camera !== null;
 
 // ============================================================================
 // Types
@@ -55,6 +57,79 @@ interface ParsedRequest {
   expiresAt: number;
 }
 
+interface CameraViewProps {
+  onCodeScanned: (code: string) => void;
+  onStopCamera: () => void;
+}
+
+// ============================================================================
+// Camera View Component (isolated to safely use hooks)
+// ============================================================================
+
+/**
+ * CameraView - Renders camera with QR scanning.
+ * This component is ONLY rendered when camera library is available,
+ * so hooks can be called unconditionally inside it.
+ */
+function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX.Element | null {
+  // IMPORTANT: This component is only rendered when CAMERA_AVAILABLE is true
+  // The hooks below are safe to call unconditionally here
+  if (!useCameraDeviceHook || !useCodeScannerHook || !CameraComponent) {
+    return null;
+  }
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const device = useCameraDeviceHook('back');
+  const lastScannedCode = useRef<string>('');
+  const scanCooldown = useRef<boolean>(false);
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const codeScanner = useCodeScannerHook({
+    codeTypes: ['qr'],
+    onCodeScanned: (codes: any[]) => {
+      if (codes.length > 0 && !scanCooldown.current) {
+        const code = codes[0];
+        if (code.value && code.value !== lastScannedCode.current) {
+          lastScannedCode.current = code.value;
+          scanCooldown.current = true;
+          onCodeScanned(code.value);
+          
+          // Reset cooldown after 2 seconds
+          setTimeout(() => {
+            scanCooldown.current = false;
+          }, 2000);
+        }
+      }
+    },
+  });
+
+  if (!device) {
+    return (
+      <View style={styles.cameraPlaceholder}>
+        <Text style={styles.cameraIcon}>📷</Text>
+        <Text style={styles.cameraText}>No Camera Found</Text>
+        <TouchableOpacity style={styles.stopButton} onPress={onStopCamera}>
+          <Text style={styles.stopButtonText}>✕ Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <CameraComponent
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={true}
+        codeScanner={codeScanner}
+      />
+      <TouchableOpacity style={styles.stopButton} onPress={onStopCamera}>
+        <Text style={styles.stopButtonText}>✕ Stop Camera</Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
 // ============================================================================
 // Main Screen
 // ============================================================================
@@ -64,53 +139,6 @@ export default function ScanScreen(): React.JSX.Element {
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastScanned, setLastScanned] = useState<ParsedRequest | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
-  const lastScannedCode = useRef<string>('');
-  const scanCooldown = useRef<boolean>(false);
-
-  // Camera hooks (only if available)
-  const cameraPermission = CAMERA_AVAILABLE ? useCameraPermission() : { hasPermission: false, requestPermission: async () => false };
-  const device = CAMERA_AVAILABLE ? useCameraDevice('back') : null;
-
-  // Code scanner (only if camera available)
-  const codeScanner = CAMERA_AVAILABLE ? useCodeScanner({
-    codeTypes: ['qr'],
-    onCodeScanned: (codes: any[]) => {
-      if (codes.length > 0 && !scanCooldown.current) {
-        const code = codes[0];
-        if (code.value && code.value !== lastScannedCode.current) {
-          lastScannedCode.current = code.value;
-          scanCooldown.current = true;
-          handleScannedCode(code.value);
-          
-          // Reset cooldown after 2 seconds
-          setTimeout(() => {
-            scanCooldown.current = false;
-          }, 2000);
-        }
-      }
-    },
-  }) : null;
-
-  // Request camera permission on mount
-  useEffect(() => {
-    if (CAMERA_AVAILABLE && !cameraPermission.hasPermission) {
-      cameraPermission.requestPermission();
-    }
-  }, []);
-
-  // Handle scanned QR code
-  const handleScannedCode = useCallback(async (data: string) => {
-    if (isProcessing) return;
-    
-    setIsProcessing(true);
-    console.log('[ScanScreen] Scanned QR code:', data.substring(0, 50) + '...');
-
-    try {
-      await processQrCode(data);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [isProcessing]);
 
   // Parse QR data (base64 encoded JSON from Mission Control)
   const parseQrData = useCallback((data: string): ParsedRequest | null => {
@@ -188,6 +216,20 @@ export default function ScanScreen(): React.JSX.Element {
     }
   }, [parseQrData]);
 
+  // Handle scanned QR code from camera
+  const handleScannedCode = useCallback(async (data: string) => {
+    if (isProcessing) return;
+    
+    setIsProcessing(true);
+    console.log('[ScanScreen] Scanned QR code:', data.substring(0, 50) + '...');
+
+    try {
+      await processQrCode(data);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [isProcessing, processQrCode]);
+
   // Approve and sign the request
   const approveRequest = async (request: ParsedRequest) => {
     setIsProcessing(true);
@@ -229,7 +271,7 @@ export default function ScanScreen(): React.JSX.Element {
   };
 
   // Toggle camera
-  const toggleCamera = () => {
+  const toggleCamera = async () => {
     if (!CAMERA_AVAILABLE) {
       Alert.alert(
         'Camera Not Available',
@@ -239,9 +281,26 @@ export default function ScanScreen(): React.JSX.Element {
       return;
     }
     
-    if (!cameraPermission.hasPermission) {
-      Linking.openSettings();
-      return;
+    // Request permission when opening camera
+    if (!cameraActive && useCameraPermissionHook) {
+      // We can't call the hook here, but we can try to request via static method
+      try {
+        const Camera = require('react-native-vision-camera').Camera;
+        const status = await Camera.requestCameraPermission();
+        if (status !== 'granted') {
+          Alert.alert(
+            'Camera Permission Required',
+            'Please enable camera access in Settings to scan QR codes.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
+          return;
+        }
+      } catch (e) {
+        console.error('[ScanScreen] Permission request failed:', e);
+      }
     }
     
     setCameraActive(!cameraActive);
@@ -258,12 +317,10 @@ export default function ScanScreen(): React.JSX.Element {
 
         {/* Camera View */}
         <View style={styles.cameraContainer}>
-          {cameraActive && CAMERA_AVAILABLE && device ? (
-            <Camera
-              style={StyleSheet.absoluteFill}
-              device={device}
-              isActive={cameraActive}
-              codeScanner={codeScanner}
+          {cameraActive && CAMERA_AVAILABLE ? (
+            <CameraView 
+              onCodeScanned={handleScannedCode}
+              onStopCamera={() => setCameraActive(false)}
             />
           ) : (
             <View style={styles.cameraPlaceholder}>
@@ -274,37 +331,27 @@ export default function ScanScreen(): React.JSX.Element {
               <Text style={styles.cameraSubtext}>
                 {CAMERA_AVAILABLE 
                   ? 'Point at a governance QR code'
-                  : 'Install react-native-vision-camera\nor use manual input below'}
+                  : 'Use manual input below'}
               </Text>
               <TouchableOpacity 
                 style={styles.permissionButton}
                 onPress={toggleCamera}
               >
                 <Text style={styles.permissionButtonText}>
-                  {CAMERA_AVAILABLE 
-                    ? (cameraPermission.hasPermission ? 'Start Camera' : 'Enable Camera')
-                    : 'Open Settings'}
+                  {CAMERA_AVAILABLE ? 'Start Camera' : 'Use Manual Input'}
                 </Text>
               </TouchableOpacity>
             </View>
           )}
 
           {/* Scan Frame Overlay */}
-          <View style={styles.scanFrame}>
-            <View style={[styles.corner, styles.cornerTL]} />
-            <View style={[styles.corner, styles.cornerTR]} />
-            <View style={[styles.corner, styles.cornerBL]} />
-            <View style={[styles.corner, styles.cornerBR]} />
-          </View>
-
-          {/* Stop Camera Button */}
           {cameraActive && (
-            <TouchableOpacity 
-              style={styles.stopButton}
-              onPress={() => setCameraActive(false)}
-            >
-              <Text style={styles.stopButtonText}>✕ Stop Camera</Text>
-            </TouchableOpacity>
+            <View style={styles.scanFrame}>
+              <View style={[styles.corner, styles.cornerTL]} />
+              <View style={[styles.corner, styles.cornerTR]} />
+              <View style={[styles.corner, styles.cornerBL]} />
+              <View style={[styles.corner, styles.cornerBR]} />
+            </View>
           )}
 
           {/* Processing Indicator */}
@@ -384,18 +431,6 @@ export default function ScanScreen(): React.JSX.Element {
             <Text style={styles.statusLabel}>Library:</Text>
             <Text style={[styles.statusValue, CAMERA_AVAILABLE ? styles.statusOk : styles.statusError]}>
               {CAMERA_AVAILABLE ? '✓ Installed' : '✗ Not Installed'}
-            </Text>
-          </View>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Permission:</Text>
-            <Text style={[styles.statusValue, cameraPermission.hasPermission ? styles.statusOk : styles.statusError]}>
-              {cameraPermission.hasPermission ? '✓ Granted' : '✗ Not Granted'}
-            </Text>
-          </View>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Device:</Text>
-            <Text style={[styles.statusValue, device ? styles.statusOk : styles.statusError]}>
-              {device ? '✓ Available' : '✗ Not Found'}
             </Text>
           </View>
         </View>

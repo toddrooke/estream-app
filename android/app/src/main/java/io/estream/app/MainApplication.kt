@@ -23,6 +23,8 @@ class MainApplication : Application(), ReactApplication {
               add(SeekerPackage())
               // Native QUIC module
               add(QuicClientPackage())
+              // ML-DSA-87 Post-Quantum signing module
+              add(MlDsa87Package())
             }
 
         override fun getJSMainModuleName(): String = "index"

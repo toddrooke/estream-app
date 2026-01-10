@@ -1,11 +1,14 @@
 /**
- * QR Scanner Screen
+ * Spark Scanner Screen
  * 
- * Scans QR codes from Mission Control or CLI for governance signing requests.
- * Uses react-native-vision-camera for native QR code scanning when available.
+ * Scans Spark patterns from Mission Control for device registration and verification.
+ * Uses react-native-vision-camera for camera access.
+ * 
+ * Current: Extracts QR data embedded in Spark
+ * Future: Full motion-based liveness verification
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -18,6 +21,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { QrSigningService } from '@/services/governance';
 
@@ -26,17 +30,17 @@ import { QrSigningService } from '@/services/governance';
 // ============================================================================
 
 let CameraComponent: React.ComponentType<any> | null = null;
-let useCameraDeviceHook: (() => any) | null = null;
-let useCameraPermissionHook: (() => { hasPermission: boolean; requestPermission: () => Promise<boolean> }) | null = null;
+let useCameraDeviceHook: ((position: string) => any) | null = null;
 let useCodeScannerHook: ((config: any) => any) | null = null;
+let CameraModule: any = null;
 let CAMERA_AVAILABLE = false;
 
 try {
   const VisionCamera = require('react-native-vision-camera');
   CameraComponent = VisionCamera.Camera;
   useCameraDeviceHook = VisionCamera.useCameraDevice;
-  useCameraPermissionHook = VisionCamera.useCameraPermission;
   useCodeScannerHook = VisionCamera.useCodeScanner;
+  CameraModule = VisionCamera.Camera;
   CAMERA_AVAILABLE = true;
   console.log('[ScanScreen] react-native-vision-camera loaded successfully');
 } catch (e) {
@@ -50,11 +54,13 @@ try {
 
 interface ParsedRequest {
   type: string;
-  id: string;
-  operation: string;
-  title: string;
-  callbackUrl: string;
-  expiresAt: number;
+  id?: string;
+  operation?: string;
+  title?: string;
+  callbackUrl?: string;
+  expiresAt?: number;
+  inviteCode?: string;
+  orgId?: string;
 }
 
 interface CameraViewProps {
@@ -66,14 +72,7 @@ interface CameraViewProps {
 // Camera View Component (isolated to safely use hooks)
 // ============================================================================
 
-/**
- * CameraView - Renders camera with QR scanning.
- * This component is ONLY rendered when camera library is available,
- * so hooks can be called unconditionally inside it.
- */
 function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX.Element | null {
-  // IMPORTANT: This component is only rendered when CAMERA_AVAILABLE is true
-  // The hooks below are safe to call unconditionally here
   if (!useCameraDeviceHook || !useCodeScannerHook || !CameraComponent) {
     return null;
   }
@@ -94,7 +93,6 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
           scanCooldown.current = true;
           onCodeScanned(code.value);
           
-          // Reset cooldown after 2 seconds
           setTimeout(() => {
             scanCooldown.current = false;
           }, 2000);
@@ -108,6 +106,7 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
       <View style={styles.cameraPlaceholder}>
         <Text style={styles.cameraIcon}>📷</Text>
         <Text style={styles.cameraText}>No Camera Found</Text>
+        <Text style={styles.cameraSubtext}>Make sure camera permissions are granted</Text>
         <TouchableOpacity style={styles.stopButton} onPress={onStopCamera}>
           <Text style={styles.stopButtonText}>✕ Go Back</Text>
         </TouchableOpacity>
@@ -139,123 +138,219 @@ export default function ScanScreen(): React.JSX.Element {
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastScanned, setLastScanned] = useState<ParsedRequest | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState<string>('unknown');
 
-  // Parse QR data (base64 encoded JSON from Mission Control)
-  const parseQrData = useCallback((data: string): ParsedRequest | null => {
+  // Check permission on mount
+  useEffect(() => {
+    checkCameraPermission();
+  }, []);
+
+  const checkCameraPermission = async () => {
+    if (!CAMERA_AVAILABLE) {
+      setPermissionStatus('unavailable');
+      return;
+    }
+    
     try {
-      // Try base64 decode first (Mission Control format)
-      let decoded: string;
-      if (typeof Buffer !== 'undefined') {
-        decoded = Buffer.from(data, 'base64').toString('utf8');
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.CAMERA
+        );
+        setPermissionStatus(granted ? 'granted' : 'denied');
       } else {
-        decoded = atob(decodeURIComponent(data));
+        // iOS - check via vision camera
+        if (CameraModule) {
+          const status = await CameraModule.getCameraPermissionStatus();
+          setPermissionStatus(status);
+        }
       }
+    } catch (e) {
+      console.error('[ScanScreen] Permission check failed:', e);
+      setPermissionStatus('error');
+    }
+  };
+
+  // Request camera permission
+  const requestCameraPermission = async (): Promise<boolean> => {
+    try {
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+          {
+            title: 'Camera Permission',
+            message: 'eStream needs camera access to scan Spark patterns for device registration.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        const result = granted === PermissionsAndroid.RESULTS.GRANTED;
+        setPermissionStatus(result ? 'granted' : 'denied');
+        return result;
+      } else {
+        // iOS
+        if (CameraModule) {
+          const status = await CameraModule.requestCameraPermission();
+          setPermissionStatus(status);
+          return status === 'granted';
+        }
+      }
+    } catch (e) {
+      console.error('[ScanScreen] Permission request failed:', e);
+      setPermissionStatus('error');
+    }
+    return false;
+  };
+
+  // Parse Spark/QR data (base64 encoded JSON)
+  const parseSparkData = useCallback((data: string): ParsedRequest | null => {
+    try {
+      // Try base64 decode first
+      let decoded: string;
+      try {
+        if (typeof Buffer !== 'undefined') {
+          decoded = Buffer.from(data, 'base64').toString('utf8');
+        } else {
+          decoded = atob(decodeURIComponent(data));
+        }
+      } catch {
+        decoded = data;
+      }
+      
       const parsed = JSON.parse(decoded);
       return parsed as ParsedRequest;
     } catch {
       // Try direct JSON parse
       try {
-        const parsed = JSON.parse(data);
-        return parsed as ParsedRequest;
+        return JSON.parse(data) as ParsedRequest;
       } catch {
-        // Try estream-sign:// protocol
-        if (data.startsWith('estream-sign://')) {
-          return null; // Let QrSigningService handle this
-        }
         return null;
       }
     }
   }, []);
 
-  // Process scanned QR code
-  const processQrCode = useCallback(async (data: string) => {
-    console.log('[ScanScreen] Processing QR data:', data.substring(0, 50) + '...');
+  // Process scanned data
+  const processScannedData = useCallback(async (data: string) => {
+    console.log('[ScanScreen] Processing data:', data.substring(0, 50) + '...');
 
     try {
-      // First try the estream-sign:// protocol
-      if (data.startsWith('estream-sign://')) {
+      // Try estream-sign:// protocol
+      if (data.startsWith('estream-sign://') || data.startsWith('estream://')) {
         const success = await QrSigningService.processScannedQr(data);
         if (success) {
-          Alert.alert(
-            '✅ Request Received',
-            'Governance request added. Go to Governance tab to approve.',
-            [{ text: 'OK' }]
-          );
+          Alert.alert('✅ Request Received', 'Governance request added. Go to Governance tab to approve.');
           setManualInput('');
           setCameraActive(false);
         }
         return;
       }
 
-      // Try Mission Control format (base64 JSON)
-      const parsed = parseQrData(data);
-      if (parsed && parsed.type === 'governance-request') {
-        setLastScanned(parsed);
-        setCameraActive(false);
+      // Try parsing as Spark data
+      const parsed = parseSparkData(data);
+      
+      if (parsed) {
+        if (parsed.type === 'device-registration') {
+          // Device registration flow
+          setLastScanned(parsed);
+          setCameraActive(false);
+          
+          Alert.alert(
+            '✦ Device Registration',
+            `Registering this device with organization.\n\nInvite: ${parsed.inviteCode?.substring(0, 8)}...`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Register Device', 
+                onPress: () => completeRegistration(parsed),
+              },
+            ]
+          );
+          return;
+        }
         
-        // Show confirmation
-        Alert.alert(
-          '📱 Governance Request',
-          `Operation: ${parsed.operation}\n${parsed.title}\n\nApprove this request?`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Approve & Sign', 
-              onPress: () => approveRequest(parsed),
-            },
-          ]
-        );
-        setManualInput('');
-        return;
+        if (parsed.type === 'governance-request') {
+          setLastScanned(parsed);
+          setCameraActive(false);
+          
+          Alert.alert(
+            '📱 Governance Request',
+            `Operation: ${parsed.operation}\n${parsed.title}\n\nApprove this request?`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Approve & Sign', 
+                onPress: () => approveRequest(parsed),
+              },
+            ]
+          );
+          return;
+        }
       }
 
-      Alert.alert('Invalid QR Code', 'This QR code is not a valid governance request.');
+      Alert.alert('Unknown Data', 'Could not recognize this Spark pattern.');
     } catch (error) {
-      console.error('[ScanScreen] Error processing QR:', error);
-      Alert.alert('Error', 'Failed to process QR code: ' + String(error));
+      console.error('[ScanScreen] Error processing:', error);
+      Alert.alert('Error', 'Failed to process: ' + String(error));
     }
-  }, [parseQrData]);
+  }, [parseSparkData]);
 
-  // Handle scanned QR code from camera
+  // Handle scanned code from camera
   const handleScannedCode = useCallback(async (data: string) => {
     if (isProcessing) return;
     
     setIsProcessing(true);
-    console.log('[ScanScreen] Scanned QR code:', data.substring(0, 50) + '...');
+    console.log('[ScanScreen] Scanned:', data.substring(0, 50) + '...');
 
     try {
-      await processQrCode(data);
+      await processScannedData(data);
     } finally {
       setIsProcessing(false);
     }
-  }, [isProcessing, processQrCode]);
+  }, [isProcessing, processScannedData]);
 
-  // Approve and sign the request
+  // Complete device registration
+  const completeRegistration = async (request: ParsedRequest) => {
+    setIsProcessing(true);
+    
+    try {
+      // TODO: Send device public key to callback
+      Alert.alert('✅ Registered', 'Device registration complete!');
+      setLastScanned(null);
+    } catch (error) {
+      console.error('[ScanScreen] Registration error:', error);
+      Alert.alert('Error', 'Failed to complete registration: ' + String(error));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Approve governance request
   const approveRequest = async (request: ParsedRequest) => {
     setIsProcessing(true);
     
     try {
-      // Send approval to callback URL
-      const response = await fetch(request.callbackUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: request.id,
-          signature: 'seeker-approved', // TODO: Use VaultContext for real signing
-          pubkey: 'seeker-pubkey',
-          timestamp: Date.now(),
-        }),
-      });
+      if (request.callbackUrl) {
+        const response = await fetch(request.callbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestId: request.id,
+            signature: 'seeker-approved',
+            pubkey: 'seeker-pubkey',
+            timestamp: Date.now(),
+          }),
+        });
 
-      if (response.ok) {
-        Alert.alert('✅ Approved', `${request.operation} request approved and signed!`);
-        setLastScanned(null);
-      } else {
-        const error = await response.text();
-        Alert.alert('Error', 'Failed to send approval: ' + error);
+        if (response.ok) {
+          Alert.alert('✅ Approved', `${request.operation} request approved!`);
+          setLastScanned(null);
+        } else {
+          const error = await response.text();
+          Alert.alert('Error', 'Failed to send approval: ' + error);
+        }
       }
     } catch (error) {
-      console.error('[ScanScreen] Error approving request:', error);
+      console.error('[ScanScreen] Approval error:', error);
       Alert.alert('Error', 'Failed to send approval: ' + String(error));
     } finally {
       setIsProcessing(false);
@@ -266,7 +361,7 @@ export default function ScanScreen(): React.JSX.Element {
   const handleManualSubmit = () => {
     if (manualInput.trim()) {
       setIsProcessing(true);
-      processQrCode(manualInput.trim()).finally(() => setIsProcessing(false));
+      processScannedData(manualInput.trim()).finally(() => setIsProcessing(false));
     }
   };
 
@@ -275,31 +370,25 @@ export default function ScanScreen(): React.JSX.Element {
     if (!CAMERA_AVAILABLE) {
       Alert.alert(
         'Camera Not Available',
-        'react-native-vision-camera is not installed. Use manual input instead.',
+        'Camera library is not installed. Use manual input instead.',
         [{ text: 'OK' }]
       );
       return;
     }
     
-    // Request permission when opening camera
-    if (!cameraActive && useCameraPermissionHook) {
-      // We can't call the hook here, but we can try to request via static method
-      try {
-        const Camera = require('react-native-vision-camera').Camera;
-        const status = await Camera.requestCameraPermission();
-        if (status !== 'granted') {
-          Alert.alert(
-            'Camera Permission Required',
-            'Please enable camera access in Settings to scan QR codes.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Open Settings', onPress: () => Linking.openSettings() },
-            ]
-          );
-          return;
-        }
-      } catch (e) {
-        console.error('[ScanScreen] Permission request failed:', e);
+    if (!cameraActive) {
+      // Request permission
+      const granted = await requestCameraPermission();
+      if (!granted) {
+        Alert.alert(
+          'Camera Permission Required',
+          'Please enable camera access in Settings to scan Spark patterns.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+        return;
       }
     }
     
@@ -311,8 +400,8 @@ export default function ScanScreen(): React.JSX.Element {
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>📷 Scan QR</Text>
-          <Text style={styles.subtitle}>Scan governance requests from Mission Control</Text>
+          <Text style={styles.screenTitle}>✦ Scan Spark</Text>
+          <Text style={styles.subtitle}>Scan Spark patterns for registration & verification</Text>
         </View>
 
         {/* Camera View */}
@@ -324,13 +413,13 @@ export default function ScanScreen(): React.JSX.Element {
             />
           ) : (
             <View style={styles.cameraPlaceholder}>
-              <Text style={styles.cameraIcon}>📷</Text>
+              <Text style={styles.sparkIcon}>✦</Text>
               <Text style={styles.cameraText}>
-                {CAMERA_AVAILABLE ? 'Tap to Start Camera' : 'Camera Not Available'}
+                {CAMERA_AVAILABLE ? 'Tap to Scan Spark' : 'Camera Not Available'}
               </Text>
               <Text style={styles.cameraSubtext}>
                 {CAMERA_AVAILABLE 
-                  ? 'Point at a governance QR code'
+                  ? 'Point at a Spark pattern from Mission Control'
                   : 'Use manual input below'}
               </Text>
               <TouchableOpacity 
@@ -338,19 +427,19 @@ export default function ScanScreen(): React.JSX.Element {
                 onPress={toggleCamera}
               >
                 <Text style={styles.permissionButtonText}>
-                  {CAMERA_AVAILABLE ? 'Start Camera' : 'Use Manual Input'}
+                  {CAMERA_AVAILABLE ? '✦ Start Scanner' : 'Use Manual Input'}
                 </Text>
               </TouchableOpacity>
             </View>
           )}
 
-          {/* Scan Frame Overlay */}
+          {/* Circular Scan Frame Overlay */}
           {cameraActive && (
-            <View style={styles.scanFrame}>
-              <View style={[styles.corner, styles.cornerTL]} />
-              <View style={[styles.corner, styles.cornerTR]} />
-              <View style={[styles.corner, styles.cornerBL]} />
-              <View style={[styles.corner, styles.cornerBR]} />
+            <View style={styles.scanFrameContainer}>
+              <View style={styles.circularFrame}>
+                <View style={styles.circularFrameInner} />
+              </View>
+              <Text style={styles.scanHint}>Align Spark within circle</Text>
             </View>
           )}
 
@@ -365,14 +454,14 @@ export default function ScanScreen(): React.JSX.Element {
 
         {/* Manual Input */}
         <View style={styles.manualSection}>
-          <Text style={styles.sectionTitle}>Or Paste QR Data</Text>
+          <Text style={styles.sectionTitle}>Or Paste Spark Data</Text>
           <Text style={styles.sectionSubtitle}>
-            Copy the QR code data from Mission Control and paste here
+            Copy the Spark data from Mission Control and paste here
           </Text>
           
           <TextInput
             style={styles.textInput}
-            placeholder="Paste QR code data here..."
+            placeholder="Paste Spark data here..."
             placeholderTextColor="#666"
             value={manualInput}
             onChangeText={setManualInput}
@@ -388,7 +477,7 @@ export default function ScanScreen(): React.JSX.Element {
             {isProcessing ? (
               <ActivityIndicator color="#000" size="small" />
             ) : (
-              <Text style={styles.submitButtonText}>Process QR Data</Text>
+              <Text style={styles.submitButtonText}>Process Data</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -396,10 +485,13 @@ export default function ScanScreen(): React.JSX.Element {
         {/* Last Scanned */}
         {lastScanned && (
           <View style={styles.lastScannedCard}>
-            <Text style={styles.lastScannedTitle}>Last Scanned Request</Text>
-            <Text style={styles.lastScannedOperation}>{lastScanned.operation}</Text>
-            <Text style={styles.lastScannedDetail}>{lastScanned.title}</Text>
-            <Text style={styles.lastScannedId}>ID: {lastScanned.id.substring(0, 16)}...</Text>
+            <Text style={styles.lastScannedTitle}>Last Scanned</Text>
+            <Text style={styles.lastScannedOperation}>
+              {lastScanned.type === 'device-registration' ? '✦ Device Registration' : lastScanned.operation}
+            </Text>
+            <Text style={styles.lastScannedDetail}>
+              {lastScanned.title || `Invite: ${lastScanned.inviteCode?.substring(0, 16)}...`}
+            </Text>
           </View>
         )}
 
@@ -408,29 +500,40 @@ export default function ScanScreen(): React.JSX.Element {
           <Text style={styles.instructionsTitle}>How to Use</Text>
           <View style={styles.step}>
             <Text style={styles.stepNumber}>1</Text>
-            <Text style={styles.stepText}>Click a governance action in Mission Control</Text>
+            <Text style={styles.stepText}>Open Mission Control and click "Register Device"</Text>
           </View>
           <View style={styles.step}>
             <Text style={styles.stepNumber}>2</Text>
-            <Text style={styles.stepText}>A QR code modal will appear</Text>
+            <Text style={styles.stepText}>A Spark pattern will appear (animated particles)</Text>
           </View>
           <View style={styles.step}>
             <Text style={styles.stepNumber}>3</Text>
-            <Text style={styles.stepText}>Scan the QR code with this screen</Text>
+            <Text style={styles.stepText}>Point this camera at the Spark for 2+ seconds</Text>
           </View>
           <View style={styles.step}>
             <Text style={styles.stepNumber}>4</Text>
-            <Text style={styles.stepText}>Review and approve the request</Text>
+            <Text style={styles.stepText}>Confirm to complete registration</Text>
           </View>
         </View>
 
-        {/* Camera Status */}
+        {/* Status Card */}
         <View style={styles.statusCard}>
-          <Text style={styles.statusTitle}>Camera Status</Text>
+          <Text style={styles.statusTitle}>Scanner Status</Text>
           <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Library:</Text>
+            <Text style={styles.statusLabel}>Camera Library:</Text>
             <Text style={[styles.statusValue, CAMERA_AVAILABLE ? styles.statusOk : styles.statusError]}>
               {CAMERA_AVAILABLE ? '✓ Installed' : '✗ Not Installed'}
+            </Text>
+          </View>
+          <View style={styles.statusRow}>
+            <Text style={styles.statusLabel}>Permission:</Text>
+            <Text style={[
+              styles.statusValue, 
+              permissionStatus === 'granted' ? styles.statusOk : styles.statusError
+            ]}>
+              {permissionStatus === 'granted' ? '✓ Granted' : 
+               permissionStatus === 'denied' ? '✗ Denied' : 
+               permissionStatus === 'unavailable' ? '- N/A' : '? Unknown'}
             </Text>
           </View>
         </View>
@@ -486,6 +589,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 20,
   },
+  sparkIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+    color: '#00ffd5',
+  },
   cameraIcon: {
     fontSize: 64,
     marginBottom: 16,
@@ -503,69 +611,75 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   permissionButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     backgroundColor: '#00ffd5',
-    borderRadius: 8,
+    borderRadius: 24,
   },
   permissionButtonText: {
     color: '#000',
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 16,
   },
-  scanFrame: {
+  
+  // Circular scan frame
+  scanFrameContainer: {
     position: 'absolute',
-    top: '20%',
-    left: '20%',
-    right: '20%',
-    bottom: '20%',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  corner: {
-    position: 'absolute',
-    width: 30,
-    height: 30,
+  circularFrame: {
+    width: '70%',
+    aspectRatio: 1,
+    borderRadius: 999,
+    borderWidth: 3,
     borderColor: '#00ffd5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 255, 213, 0.05)',
   },
-  cornerTL: {
-    top: 0,
-    left: 0,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
+  circularFrameInner: {
+    width: '90%',
+    aspectRatio: 1,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 213, 0.3)',
+    borderStyle: 'dashed',
   },
-  cornerTR: {
-    top: 0,
-    right: 0,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
+  scanHint: {
+    marginTop: 16,
+    color: '#00ffd5',
+    fontSize: 14,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
-  cornerBL: {
-    bottom: 0,
-    left: 0,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-  },
-  cornerBR: {
-    bottom: 0,
-    right: 0,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-  },
+  
   stopButton: {
     position: 'absolute',
     bottom: 20,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    padding: 14,
+    borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
   },
   stopButtonText: {
     color: '#fff',
     fontWeight: '600',
+    fontSize: 16,
   },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -606,7 +720,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     backgroundColor: '#00ffd5',
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
   },
   submitButtonText: {
@@ -641,12 +755,6 @@ const styles = StyleSheet.create({
   lastScannedDetail: {
     fontSize: 14,
     color: '#ccc',
-    marginBottom: 8,
-  },
-  lastScannedId: {
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: '#666',
   },
 
   // Instructions
@@ -699,7 +807,7 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   statusLabel: {
     fontSize: 12,

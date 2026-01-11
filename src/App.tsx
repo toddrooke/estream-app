@@ -18,11 +18,13 @@ import {
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { VaultProvider, useVault, useTrustBadge } from '@/services/vault';
+import { AccountProvider, useAccount } from '@/services/account';
 
 // Screens
 import DevTools from '@/screens/DevTools';
 import GovernanceScreen from '@/screens/GovernanceScreen';
 import ScanScreen from '@/screens/ScanScreen';
+import AccountScreen from '@/screens/AccountScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -170,6 +172,7 @@ function SettingsScreen(): React.JSX.Element {
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   const icons: Record<string, string> = {
     Home: '⬡',
+    Account: '✦',
     Scan: '📷',
     Governance: '🔐',
     Developer: '🔧',
@@ -199,6 +202,7 @@ function AppContent(): React.JSX.Element {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Account" component={AccountScreen} />
       <Tab.Screen name="Scan" component={ScanScreen} />
       <Tab.Screen name="Governance" component={GovernanceScreen} />
       <Tab.Screen name="Developer" component={DevTools} />
@@ -213,10 +217,12 @@ function AppContent(): React.JSX.Element {
 function App(): React.JSX.Element {
   return (
     <VaultProvider nodeUrl={DEFAULT_NODE_URL}>
-      <NavigationContainer>
-        <StatusBar barStyle="light-content" />
-        <AppContent />
-      </NavigationContainer>
+      <AccountProvider>
+        <NavigationContainer>
+          <StatusBar barStyle="light-content" />
+          <AppContent />
+        </NavigationContainer>
+      </AccountProvider>
     </VaultProvider>
   );
 }

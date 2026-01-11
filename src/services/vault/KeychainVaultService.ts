@@ -4,6 +4,11 @@
  * Uses iOS Secure Enclave for hardware-backed key storage.
  * Falls back to Keychain Services if Secure Enclave is unavailable.
  * 
+ * ## iOS Premium Features
+ * - Secure Enclave P-256 key generation
+ * - Face ID / Touch ID for signing
+ * - Per-operation biometric for governance
+ * 
  * See: docs/specs/SEEKER_SIGNING.md
  */
 
@@ -23,9 +28,41 @@ interface KeychainNativeModule {
   getSecurityLevel(alias: string): Promise<'software' | 'secure_enclave'>;
 }
 
-// Get native module (will be null on Android)
+// Biometric module interface (iOS only)
+interface BiometricNativeModule {
+  getBiometricStatus(): Promise<{
+    available: boolean;
+    biometricType: string;
+    secureEnclaveAvailable: boolean;
+  }>;
+  authenticate(reason: string, subtitle: string | null): Promise<{
+    success: boolean;
+    method?: string;
+    cancelled?: boolean;
+  }>;
+  generateBiometricProtectedKey(alias: string, requireBiometric: boolean): Promise<{
+    publicKey: string;
+    secureEnclave: boolean;
+  }>;
+  signWithBiometricKey(alias: string, dataBase64: string, reason: string): Promise<{
+    success: boolean;
+    signature?: string;
+    cancelled?: boolean;
+  }>;
+  hasBiometricKey(alias: string): Promise<boolean>;
+  signGovernanceAction(alias: string, actionJson: string): Promise<{
+    success: boolean;
+    signature?: string;
+    actionHash?: string;
+  }>;
+}
+
+// Get native modules (will be null on Android)
 const KeychainModule: KeychainNativeModule | null = 
   Platform.OS === 'ios' ? NativeModules.KeychainModule : null;
+
+const BiometricModule: BiometricNativeModule | null =
+  Platform.OS === 'ios' ? NativeModules.BiometricModule : null;
 
 const DEFAULT_KEY_ALIAS = 'estream-signing-key';
 
@@ -176,6 +213,173 @@ export class KeychainVaultService implements VaultService {
       console.error('Failed to delete Keychain key:', error);
       return false;
     }
+  }
+
+  // ============================================================================
+  // iOS Premium: Face ID / Touch ID Integration
+  // ============================================================================
+
+  /**
+   * Check if Face ID / Touch ID is available
+   */
+  async isBiometricAvailable(): Promise<boolean> {
+    if (!BiometricModule) {
+      return false;
+    }
+    
+    try {
+      const status = await BiometricModule.getBiometricStatus();
+      return status.available;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get biometric type (FaceID, TouchID, etc.)
+   */
+  async getBiometricType(): Promise<'FaceID' | 'TouchID' | 'None'> {
+    if (!BiometricModule) {
+      return 'None';
+    }
+    
+    try {
+      const status = await BiometricModule.getBiometricStatus();
+      if (status.biometricType === 'FaceID') return 'FaceID';
+      if (status.biometricType === 'TouchID') return 'TouchID';
+      return 'None';
+    } catch {
+      return 'None';
+    }
+  }
+
+  /**
+   * Authenticate with Face ID / Touch ID
+   */
+  async authenticateWithBiometrics(
+    reason: string = 'Authenticate to eStream'
+  ): Promise<boolean> {
+    if (!BiometricModule) {
+      return false;
+    }
+    
+    try {
+      const result = await BiometricModule.authenticate(reason, null);
+      return result.success;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Generate a biometric-protected Secure Enclave key
+   * This key requires Face ID for every signing operation
+   */
+  async generateBiometricKey(): Promise<string | null> {
+    if (!BiometricModule) {
+      return null;
+    }
+    
+    try {
+      const result = await BiometricModule.generateBiometricProtectedKey(
+        this.keyAlias + '-biometric',
+        true
+      );
+      return result.publicKey;
+    } catch (error) {
+      console.error('Failed to generate biometric key:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Sign with biometric authentication (Face ID required)
+   */
+  async signWithBiometrics(
+    message: Uint8Array,
+    reason: string = 'Sign with eStream'
+  ): Promise<Uint8Array> {
+    if (!BiometricModule) {
+      // Fall back to regular sign
+      return this.sign(message);
+    }
+    
+    // Check if biometric key exists
+    const hasBioKey = await BiometricModule.hasBiometricKey(
+      this.keyAlias + '-biometric'
+    );
+    
+    if (!hasBioKey) {
+      // Generate biometric key if needed
+      await this.generateBiometricKey();
+    }
+    
+    const messageB64 = Buffer.from(message).toString('base64');
+    const result = await BiometricModule.signWithBiometricKey(
+      this.keyAlias + '-biometric',
+      messageB64,
+      reason
+    );
+    
+    if (!result.success) {
+      if (result.cancelled) {
+        throw new Error('Biometric authentication cancelled');
+      }
+      throw new Error('Biometric signing failed');
+    }
+    
+    return Uint8Array.from(Buffer.from(result.signature!, 'base64'));
+  }
+
+  /**
+   * Sign a governance action with Face ID (always required)
+   */
+  async signGovernanceAction(action: {
+    type: string;
+    operation: string;
+    params: Record<string, unknown>;
+  }): Promise<{ signature: Uint8Array; actionHash: string }> {
+    if (!BiometricModule) {
+      throw new Error('Biometric module not available');
+    }
+    
+    // Check if biometric key exists
+    const hasBioKey = await BiometricModule.hasBiometricKey(
+      this.keyAlias + '-biometric'
+    );
+    
+    if (!hasBioKey) {
+      await this.generateBiometricKey();
+    }
+    
+    const actionJson = JSON.stringify({
+      ...action,
+      timestamp: Date.now(),
+    });
+    
+    const result = await BiometricModule.signGovernanceAction(
+      this.keyAlias + '-biometric',
+      actionJson
+    );
+    
+    if (!result.success) {
+      throw new Error('Governance signing failed or cancelled');
+    }
+    
+    return {
+      signature: Uint8Array.from(Buffer.from(result.signature!, 'base64')),
+      actionHash: result.actionHash!,
+    };
+  }
+
+  /**
+   * Get security level description for display
+   */
+  getSecurityLevelDescription(): string {
+    if (this.cachedSecurityLevel === 'secure_enclave') {
+      return 'Secure Enclave (Hardware)';
+    }
+    return 'Software';
   }
 }
 

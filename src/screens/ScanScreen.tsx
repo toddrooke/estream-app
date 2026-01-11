@@ -41,11 +41,8 @@ import {
 
 let CameraComponent: React.ComponentType<any> | null = null;
 let useCameraDeviceHook: ((position: string) => any) | null = null;
-// Reserved for future use when native frame processing is added
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let _useCodeScannerHook: ((config: any) => any) | null = null;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let _useFrameProcessorHook: ((processor: any, deps: any[]) => void) | null = null;
+let useFrameProcessorHook: any = null;
+let VisionCameraModule: any = null;
 let CameraModule: any = null;
 let CAMERA_AVAILABLE = false;
 
@@ -53,8 +50,8 @@ try {
   const VisionCamera = require('react-native-vision-camera');
   CameraComponent = VisionCamera.Camera;
   useCameraDeviceHook = VisionCamera.useCameraDevice;
-  _useCodeScannerHook = VisionCamera.useCodeScanner;
-  _useFrameProcessorHook = VisionCamera.useFrameProcessor;
+  useFrameProcessorHook = VisionCamera.useFrameProcessor;
+  VisionCameraModule = VisionCamera;
   CameraModule = VisionCamera.Camera;
   CAMERA_AVAILABLE = true;
   console.log('[ScanScreen] react-native-vision-camera loaded successfully');
@@ -62,6 +59,8 @@ try {
   console.log('[ScanScreen] react-native-vision-camera not available:', e);
   CAMERA_AVAILABLE = false;
 }
+
+// Worklets are configured via babel plugin for frame processor support
 
 // ============================================================================
 // Types
@@ -124,6 +123,24 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   const captureIntervalRef = useRef<any>(null);
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const isProcessingRef = useRef<boolean>(false);
+
+  // Native frame processor with worklets
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const frameProcessor = useFrameProcessorHook
+    ? useFrameProcessorHook((frame: any) => {
+        'worklet';
+        // The scanSpark plugin is registered globally and called via frame object
+        // VisionCamera injects registered plugins into the frame
+        try {
+          const scanSpark = (frame as any).scanSpark;
+          if (typeof scanSpark === 'function') {
+            scanSpark();
+          }
+        } catch (e) {
+          // Plugin might not be available
+        }
+      }, [])
+    : undefined;
 
   // Initialize scanner and start capture when camera is ready
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -338,21 +355,28 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={true}
-        photo={true} 
+        photo={true}
         pixelFormat="yuv"
+        fps={30}
+        frameProcessor={sparkState.isNative && useFrameProcessorHook ? frameProcessor : undefined}
       />
       
       {/* Spark Detection Overlay */}
       <View style={styles.sparkDetectionOverlay}>
-        {/* Circular scanning frame */}
-        <View style={[styles.sparkScanFrame, { borderColor: progressColor }]}>
-          {/* Progress Ring */}
-          <View style={[styles.sparkProgressRing, { borderColor: progressColor }]}>
-            <Text style={[styles.sparkProgressText, { color: progressColor }]}>
-              {sparkState.status === 'verifying' ? '...' : `${Math.round(sparkState.progress * 100)}%`}
-            </Text>
-          </View>
+        {/* Single clean circular frame */}
+        <View style={[styles.sparkProgressRing, { borderColor: progressColor }]}>
+          <Text style={[styles.sparkProgressText, { color: progressColor }]}>
+            {sparkState.status === 'verifying' ? '...' : `${Math.round(sparkState.progress * 100)}%`}
+          </Text>
+          <Text style={[styles.sparkModeText, { color: progressColor }]}>
+            {sparkState.isNative ? '⚡ Native' : ''}
+          </Text>
         </View>
+        
+        {/* Align instruction */}
+        <Text style={styles.sparkAlignText}>
+          Align Spark within circle
+        </Text>
         
         {/* Status */}
         <Text style={[styles.sparkStatusText, isDetected && { color: '#00ff88' }]}>
@@ -361,22 +385,9 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
         
         {/* Debug info */}
         <View style={styles.sparkDebugInfo}>
-          <Text style={[styles.sparkDetailText, sparkState.isNative && { color: '#00ffd5' }]}>
-            Mode: {sparkState.isNative ? '⚡ Native' : '📊 JS'}
-          </Text>
           <Text style={styles.sparkDetailText}>
-            Frames: {sparkState.framesAnalyzed}
+            Frames: {sparkState.framesAnalyzed} | Motion: {(sparkState.motionScore * 100).toFixed(0)}%
           </Text>
-          {!sparkState.isNative && (
-            <Text style={styles.sparkDetailText}>
-              Confidence: {(sparkState.sparkConfidence * 100).toFixed(0)}%
-            </Text>
-          )}
-          {sparkState.motionScore > 0 && (
-            <Text style={[styles.sparkDetailText, { color: '#00ff88' }]}>
-              Motion: {(sparkState.motionScore * 100).toFixed(0)}%
-            </Text>
-          )}
         </View>
       </View>
       
@@ -947,56 +958,60 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    bottom: 80,
+    bottom: 100,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  sparkScanFrame: {
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    borderWidth: 3,
-    borderColor: '#00ffd5',
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   sparkProgressRing: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
     borderWidth: 4,
     borderColor: '#00ffd5',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sparkProgressText: {
     color: '#00ffd5',
-    fontSize: 32,
+    fontSize: 48,
     fontWeight: 'bold',
   },
-  sparkStatusText: {
-    marginTop: 20,
-    color: '#fff',
-    fontSize: 16,
+  sparkModeText: {
+    color: '#00ffd5',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  sparkAlignText: {
+    marginTop: 16,
+    color: '#00ffd5',
+    fontSize: 14,
     fontWeight: '600',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  sparkStatusText: {
+    marginTop: 16,
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
     textAlign: 'center',
     textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
   sparkDebugInfo: {
-    marginTop: 16,
-    padding: 12,
+    marginTop: 12,
+    padding: 8,
     backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 8,
+    borderRadius: 6,
     alignItems: 'center',
   },
   sparkDetailText: {
-    color: '#888',
-    fontSize: 12,
+    color: '#666',
+    fontSize: 11,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   

@@ -11,5 +11,7 @@ module.exports = {
         },
       },
     ],
+    // Worklets for VisionCamera frame processor
+    ['react-native-worklets-core/plugin'],
   ],
 };

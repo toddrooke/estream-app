@@ -43,8 +43,10 @@ let CameraComponent: React.ComponentType<any> | null = null;
 let useCameraDeviceHook: ((position: string) => any) | null = null;
 let useFrameProcessorHook: any = null;
 let VisionCameraModule: any = null;
+let VisionCameraProxy: any = null;
 let CameraModule: any = null;
 let CAMERA_AVAILABLE = false;
+let sparkPlugin: any = null;
 
 try {
   const VisionCamera = require('react-native-vision-camera');
@@ -52,8 +54,16 @@ try {
   useCameraDeviceHook = VisionCamera.useCameraDevice;
   useFrameProcessorHook = VisionCamera.useFrameProcessor;
   VisionCameraModule = VisionCamera;
+  VisionCameraProxy = VisionCamera.VisionCameraProxy;
   CameraModule = VisionCamera.Camera;
   CAMERA_AVAILABLE = true;
+  
+  // Initialize the Spark frame processor plugin
+  if (VisionCameraProxy) {
+    sparkPlugin = VisionCameraProxy.initFrameProcessorPlugin('scanSpark', {});
+    console.log('[ScanScreen] Spark plugin initialized:', !!sparkPlugin);
+  }
+  
   console.log('[ScanScreen] react-native-vision-camera loaded successfully');
 } catch (e) {
   console.log('[ScanScreen] react-native-vision-camera not available:', e);
@@ -138,11 +148,10 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const frameProcessor = useFrameProcessorHook((frame: any) => {
     'worklet';
-    // Call native scanSpark plugin (registered in MainApplication.kt)
-    // This feeds each YUV frame to SparkScannerModule for analysis
-    const scanSpark = (frame as any).scanSpark;
-    if (typeof scanSpark === 'function') {
-      scanSpark();
+    // Call native scanSpark plugin via the initialized plugin instance
+    // The plugin analyzes each YUV frame for bright particles
+    if (sparkPlugin) {
+      sparkPlugin.call(frame);
     }
   }, []);
 
@@ -353,51 +362,57 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   const progressColor = isDetected ? '#00ff88' : '#00ffd5';
 
   return (
-    <>
-      <CameraComponent
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={true}
-        photo={true} 
-        pixelFormat="yuv"
-        frameProcessor={sparkState.isNative ? frameProcessor : undefined}
-      />
-      
-      {/* Spark Detection Overlay */}
-      <View style={styles.sparkDetectionOverlay}>
-        {/* Single clean circular frame */}
-        <View style={[styles.sparkProgressRing, { borderColor: progressColor }]}>
-          <Text style={[styles.sparkProgressText, { color: progressColor }]}>
-            {sparkState.status === 'verifying' ? '...' : `${Math.round(sparkState.progress * 100)}%`}
-          </Text>
-          <Text style={[styles.sparkModeText, { color: progressColor }]}>
-            {sparkState.isNative ? '⚡ Native' : ''}
-          </Text>
-        </View>
+    <View style={styles.cameraViewContainer}>
+      {/* Camera takes the top portion */}
+      <View style={styles.cameraArea}>
+        <CameraComponent
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={true}
+          photo={true} 
+          pixelFormat="yuv"
+          frameProcessor={sparkState.isNative ? frameProcessor : undefined}
+        />
         
-        {/* Align instruction */}
-        <Text style={styles.sparkAlignText}>
-          Align Spark within circle
-        </Text>
-        
-        {/* Status */}
-        <Text style={[styles.sparkStatusText, isDetected && { color: '#00ff88' }]}>
-          {sparkState.message}
-        </Text>
-        
-        {/* Debug info */}
-        <View style={styles.sparkDebugInfo}>
-          <Text style={styles.sparkDetailText}>
-            Frames: {sparkState.framesAnalyzed} | Motion: {(sparkState.motionScore * 100).toFixed(0)}%
+        {/* Spark Detection Overlay - centered in camera area */}
+        <View style={styles.sparkDetectionOverlay}>
+          {/* Single clean circular frame */}
+          <View style={[styles.sparkProgressRing, { borderColor: progressColor }]}>
+            <Text style={[styles.sparkProgressText, { color: progressColor }]}>
+              {sparkState.status === 'verifying' ? '...' : `${Math.round(sparkState.progress * 100)}%`}
+            </Text>
+            <Text style={[styles.sparkModeText, { color: progressColor }]}>
+              {sparkState.isNative ? '⚡ Native' : ''}
+            </Text>
+          </View>
+          
+          {/* Align instruction */}
+          <Text style={styles.sparkAlignText}>
+            Align Spark within circle
           </Text>
+          
+          {/* Status */}
+          <Text style={[styles.sparkStatusText, isDetected && { color: '#00ff88' }]}>
+            {sparkState.message}
+          </Text>
+          
+          {/* Debug info */}
+          <View style={styles.sparkDebugInfo}>
+            <Text style={styles.sparkDetailText}>
+              Frames: {sparkState.framesAnalyzed} | Motion: {(sparkState.motionScore * 100).toFixed(0)}%
+            </Text>
+          </View>
         </View>
       </View>
       
-      <TouchableOpacity style={styles.stopButton} onPress={onStopCamera}>
-        <Text style={styles.stopButtonText}>✕ Stop Scanner</Text>
-      </TouchableOpacity>
-    </>
+      {/* Stop button below camera */}
+      <View style={styles.cameraButtonArea}>
+        <TouchableOpacity style={styles.stopButtonBelow} onPress={onStopCamera}>
+          <Text style={styles.stopButtonText}>✕ Stop Scanner</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -739,35 +754,7 @@ export default function ScanScreen(): React.JSX.Element {
           )}
         </View>
 
-        {/* Manual Input */}
-        <View style={styles.manualSection}>
-          <Text style={styles.sectionTitle}>Or Paste Spark Data</Text>
-          <Text style={styles.sectionSubtitle}>
-            Copy the Spark data from Mission Control and paste here
-          </Text>
-          
-          <TextInput
-            style={styles.textInput}
-            placeholder="Paste Spark data here..."
-            placeholderTextColor="#666"
-            value={manualInput}
-            onChangeText={setManualInput}
-            multiline
-            numberOfLines={4}
-          />
-          
-          <TouchableOpacity
-            style={[styles.submitButton, isProcessing && styles.buttonDisabled]}
-            onPress={handleManualSubmit}
-            disabled={isProcessing || !manualInput.trim()}
-          >
-            {isProcessing ? (
-              <ActivityIndicator color="#000" size="small" />
-            ) : (
-              <Text style={styles.submitButtonText}>Process Data</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        {/* Manual input removed - Spark patterns are scanned visually */}
 
         {/* Last Scanned */}
         {lastScanned && (
@@ -948,19 +935,32 @@ const styles = StyleSheet.create({
   },
   
   // Spark detection overlay
+  cameraViewContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  cameraArea: {
+    flex: 1,
+    position: 'relative',
+  },
+  cameraButtonArea: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#000',
+  },
   sparkDetectionOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    bottom: 100,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sparkProgressRing: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
     borderWidth: 4,
     borderColor: '#00ffd5',
     alignItems: 'center',
@@ -1017,6 +1017,14 @@ const styles = StyleSheet.create({
     right: 20,
     backgroundColor: 'rgba(0,0,0,0.8)',
     padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  stopButtonBelow: {
+    backgroundColor: '#1a1a1a',
+    padding: 16,
     borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,

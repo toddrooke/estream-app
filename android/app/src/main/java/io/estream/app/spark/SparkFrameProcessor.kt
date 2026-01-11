@@ -23,6 +23,8 @@ class SparkFrameProcessor(proxy: VisionCameraProxy, options: Map<String, Any>?) 
     }
 
     override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
+        android.util.Log.d(TAG, "Frame callback called, isScanning=${SparkScannerModule.isScanning}")
+        
         // Check if scanning is active
         if (!SparkScannerModule.isScanning) {
             return null
@@ -32,17 +34,23 @@ class SparkFrameProcessor(proxy: VisionCameraProxy, options: Map<String, Any>?) 
         val height = frame.height
         val image = frame.image
         
+        android.util.Log.d(TAG, "Processing frame: ${width}x${height}")
+        
         // Detect particles in frame
         val particles = detectParticles(image, width, height)
         val centerBrightness = getCenterBrightness(image, width, height)
         
+        // Only log periodically to avoid spam
+        if (SparkScannerModule.getFrameCount() % 30 == 0) {
+            android.util.Log.d(TAG, "Detected ${particles.size} particles, brightness=$centerBrightness, frames=${SparkScannerModule.getFrameCount()}")
+        }
+        
         // Feed to scanner module
         SparkScannerModule.addFrame(particles, centerBrightness)
         
-        return mapOf(
-            "particleCount" to particles.size,
-            "brightness" to centerBrightness
-        )
+        // Return null - status is polled from SparkScannerModule instead
+        // (VisionCamera JSI can't convert Float to jsi::Value)
+        return null
     }
     
     private fun detectParticles(image: Image, width: Int, height: Int): List<SparkScannerModule.ParticleData> {

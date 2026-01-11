@@ -15,10 +15,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { useAccount, useSparkParams } from '@/services/account';
 import { useVault, useTrustBadge } from '@/services/vault';
+import { getIdentityNftService } from '@/services/identity';
 
 // ============================================================================
 // Spark SVG Renderer (inline for React Native)
@@ -165,6 +167,7 @@ export default function AccountScreen(): React.JSX.Element {
   
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
+  const [isMinting, setIsMinting] = useState(false);
   
   // Generate Spark SVG
   const sparkSvg = useMemo(() => {
@@ -188,6 +191,49 @@ export default function AccountScreen(): React.JSX.Element {
     setIsEditing(false);
     setEditName('');
   }, []);
+
+  const handleMintNft = useCallback(async () => {
+    if (!account?.pubkeyHash || !account?.displayName) {
+      Alert.alert('Error', 'Account not ready');
+      return;
+    }
+
+    Alert.alert(
+      'Mint Identity NFT',
+      'This will create your eStream Identity NFT on Solana devnet.\n\nYou\'ll need a small amount of SOL for the transaction fee.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mint',
+          onPress: async () => {
+            setIsMinting(true);
+            try {
+              const identityService = getIdentityNftService('devnet');
+              
+              const result = await identityService.mintViaApi(publicKey || '', {
+                pubkeyHash: account.pubkeyHash,
+                displayName: account.displayName,
+              });
+
+              if (result.success && result.mintAddress) {
+                await updateAccount({ identityNftMint: result.mintAddress });
+                Alert.alert(
+                  'Success!',
+                  `Identity NFT minted!\n\nMint: ${result.mintAddress.slice(0, 8)}...`
+                );
+              } else {
+                Alert.alert('Minting Failed', result.error || 'Unknown error');
+              }
+            } catch (error) {
+              Alert.alert('Error', error instanceof Error ? error.message : 'Minting failed');
+            } finally {
+              setIsMinting(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [account, publicKey, updateAccount]);
   
   if (isLoading) {
     return (
@@ -313,11 +359,28 @@ export default function AccountScreen(): React.JSX.Element {
         {/* Actions */}
         {!account?.identityNftMint && (
           <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => Alert.alert('Coming Soon', 'Identity NFT minting will be available in a future update.')}
+            style={[styles.actionButton, isMinting && styles.actionButtonDisabled]}
+            onPress={handleMintNft}
+            disabled={isMinting}
           >
-            <Text style={styles.actionButtonText}>Mint Identity NFT</Text>
+            {isMinting ? (
+              <View style={styles.mintingRow}>
+                <ActivityIndicator color="#000" size="small" />
+                <Text style={styles.actionButtonText}>  Minting...</Text>
+              </View>
+            ) : (
+              <Text style={styles.actionButtonText}>Mint Identity NFT</Text>
+            )}
           </TouchableOpacity>
+        )}
+        
+        {account?.identityNftMint && (
+          <View style={styles.mintedCard}>
+            <Text style={styles.mintedTitle}>✓ Identity NFT Minted</Text>
+            <Text style={styles.mintedAddress}>
+              {account.identityNftMint.slice(0, 12)}...{account.identityNftMint.slice(-8)}
+            </Text>
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -529,9 +592,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  actionButtonDisabled: {
+    opacity: 0.7,
+  },
   actionButtonText: {
     color: '#000',
     fontSize: 16,
     fontWeight: '600',
+  },
+  mintingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  mintedCard: {
+    backgroundColor: '#00ffd520',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#00ffd540',
+  },
+  mintedTitle: {
+    color: '#00ffd5',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  mintedAddress: {
+    color: '#00ffd5',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    opacity: 0.8,
   },
 });

@@ -40,7 +40,8 @@ export type GovernanceOperation =
   | 'network_genesis'
   | 'lattice_create'
   | 'node_approve'
-  | 'node_revoke';
+  | 'node_revoke'
+  | 'device_register';  // Device registration via Spark
 
 export interface GovernanceMetadata {
   // Provision

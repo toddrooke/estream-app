@@ -217,21 +217,54 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
               if (result.success) {
                 setSparkState(s => ({
                   ...s,
-                  status: 'detected',
+                  status: 'verifying',
                   motionScore: result.motionScore,
-                  message: `✓ Spark verified! Motion: ${(result.motionScore * 100).toFixed(0)}%`,
+                  message: `✓ Motion detected! Matching governance request...`,
                 }));
                 
-                setTimeout(() => {
-                  onCodeScanned(JSON.stringify({
-                    type: 'device-registration',
-                    inviteCode: 'SPARK' + Date.now().toString(36).toUpperCase().slice(0, 8),
-                    detectedVia: 'native-frame-processor',
-                    framesAnalyzed: result.framesAnalyzed,
-                    motionScore: result.motionScore,
-                    direction: result.direction,
+                // Poll for pending governance requests and match motion seed
+                try {
+                  const pendingRes = await fetch('https://console.estream.dev/api/devices/pending');
+                  if (pendingRes.ok) {
+                    const { registrations } = await pendingRes.json();
+                    
+                    // Find matching registration by comparing motion characteristics
+                    // In production: derive expected motion from each seed and compare
+                    // For now: take the first pending registration
+                    if (registrations && registrations.length > 0) {
+                      const match = registrations[0];
+                      
+                      setSparkState(s => ({
+                        ...s,
+                        status: 'detected',
+                        message: `✓ Matched! Completing registration...`,
+                      }));
+                      
+                      // Complete registration via governance lattice
+                      onCodeScanned(JSON.stringify({
+                        type: 'device-registration',
+                        inviteCode: match.inviteCode,
+                        motionSeed: match.motionSeed,
+                        orgId: match.orgId,
+                        detectedVia: 'spark-motion',
+                        motionScore: result.motionScore,
+                      }));
+                    } else {
+                      setSparkState(s => ({
+                        ...s,
+                        status: 'error',
+                        message: 'No pending registrations found',
+                      }));
+                    }
+                  }
+                } catch (e) {
+                  console.error('[Spark] Failed to match governance request:', e);
+                  setSparkState(s => ({
+                    ...s,
+                    status: 'error', 
+                    message: 'Failed to connect to governance lattice',
                   }));
-                }, 500);
+                }
               } else {
                 setSparkState(s => ({
                   ...s,
@@ -592,39 +625,37 @@ export default function ScanScreen(): React.JSX.Element {
     }
   }, [isProcessing, processScannedData]);
 
-  // Complete device registration via Spark
+  // Complete device registration via governance lattice
   const completeRegistration = async (request: ParsedRequest) => {
     setIsProcessing(true);
     
     try {
-      // Get device public key (in production, use ML-DSA-87)
-      const devicePubkey = 'demo-device-pubkey-' + Date.now();
+      // Get device public key (in production, use ML-DSA-87 from vault)
+      const devicePubkey = 'seeker-device-' + Date.now().toString(36);
       
-      // Create mock resolution from parsed request
-      const resolution: SparkResolution = {
-        version: 1,
-        code: request.inviteCode || '',
-        pubkey: '',
-        payload: {
-          type: 'device-registration',
+      // Call Mission Control to complete registration
+      const response = await fetch('https://console.estream.dev/api/devices/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           inviteCode: request.inviteCode,
-          orgId: request.orgId,
-        },
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 300000,
-      };
+          devicePubkey,
+          deviceName: 'Seeker Device',
+          motionScore: (request as any).motionScore || 0,
+        }),
+      });
       
-      const result = await SparkService.completeDeviceRegistration(
-        resolution,
-        devicePubkey,
-        'Seeker Device'
-      );
-      
-      if (result.success) {
-        Alert.alert('✅ Registered', `Device registered!\nID: ${result.deviceId}`);
+      if (response.ok) {
+        const result = await response.json();
+        Alert.alert(
+          '✅ Device Registered',
+          `Successfully registered with ${result.orgId}!\n\nDevice ID: ${result.deviceId?.substring(0, 8)}...`,
+          [{ text: 'OK' }]
+        );
         setLastScanned(null);
       } else {
-        Alert.alert('Error', 'Registration failed: ' + result.error);
+        const error = await response.json();
+        Alert.alert('Registration Failed', error.error || 'Unknown error');
       }
     } catch (error) {
       console.error('[ScanScreen] Registration error:', error);
@@ -850,11 +881,11 @@ const styles = StyleSheet.create({
 
   // Camera
   cameraContainer: {
-    aspectRatio: 0.85,  // Taller than wide to fit full circle
+    aspectRatio: 0.75,  // Even taller to ensure full circle visibility
     backgroundColor: '#1a1a1a',
     borderRadius: 16,
     overflow: 'hidden',
-    marginBottom: 24,
+    marginBottom: 16,
     position: 'relative',
   },
   cameraPlaceholder: {

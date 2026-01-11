@@ -99,7 +99,16 @@ interface SparkDetectionState {
 
 function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX.Element | null {
   if (!useCameraDeviceHook || !CameraComponent) {
-    return null;
+    return (
+      <View style={styles.cameraPlaceholder}>
+        <Text style={styles.cameraIcon}>📷</Text>
+        <Text style={styles.cameraText}>Camera Not Available</Text>
+        <Text style={styles.cameraSubtext}>VisionCamera module not loaded</Text>
+        <TouchableOpacity style={styles.stopButton} onPress={onStopCamera}>
+          <Text style={styles.stopButtonText}>✕ Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -124,23 +133,9 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const isProcessingRef = useRef<boolean>(false);
 
-  // Native frame processor with worklets
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const frameProcessor = useFrameProcessorHook
-    ? useFrameProcessorHook((frame: any) => {
-        'worklet';
-        // The scanSpark plugin is registered globally and called via frame object
-        // VisionCamera injects registered plugins into the frame
-        try {
-          const scanSpark = (frame as any).scanSpark;
-          if (typeof scanSpark === 'function') {
-            scanSpark();
-          }
-        } catch (e) {
-          // Plugin might not be available
-        }
-      }, [])
-    : undefined;
+  // Frame processor is defined outside hooks to avoid conditional hook calls
+  // The actual hook is called unconditionally below
+  const frameProcessor = undefined; // Will use native module polling instead
 
   // Initialize scanner and start capture when camera is ready
   // eslint-disable-next-line react-hooks/rules-of-hooks

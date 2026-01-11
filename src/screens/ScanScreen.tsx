@@ -133,9 +133,18 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const isProcessingRef = useRef<boolean>(false);
 
-  // Frame processor is defined outside hooks to avoid conditional hook calls
-  // The actual hook is called unconditionally below
-  const frameProcessor = undefined; // Will use native module polling instead
+  // Native frame processor - VisionCamera 4.x style
+  // The hook is safe to call here because CameraView only renders when VisionCamera is available
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const frameProcessor = useFrameProcessorHook((frame: any) => {
+    'worklet';
+    // Call native scanSpark plugin (registered in MainApplication.kt)
+    // This feeds each YUV frame to SparkScannerModule for analysis
+    const scanSpark = (frame as any).scanSpark;
+    if (typeof scanSpark === 'function') {
+      scanSpark();
+    }
+  }, []);
 
   // Initialize scanner and start capture when camera is ready
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -350,10 +359,9 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={true}
-        photo={true}
+        photo={true} 
         pixelFormat="yuv"
-        fps={30}
-        frameProcessor={sparkState.isNative && useFrameProcessorHook ? frameProcessor : undefined}
+        frameProcessor={sparkState.isNative ? frameProcessor : undefined}
       />
       
       {/* Spark Detection Overlay */}
@@ -720,15 +728,7 @@ export default function ScanScreen(): React.JSX.Element {
             </View>
           )}
 
-          {/* Circular Scan Frame Overlay */}
-          {cameraActive && (
-            <View style={styles.scanFrameContainer}>
-              <View style={styles.circularFrame}>
-                <View style={styles.circularFrameInner} />
-              </View>
-              <Text style={styles.scanHint}>Align Spark within circle</Text>
-            </View>
-          )}
+          {/* Scan frame is now part of CameraView overlay */}
 
           {/* Processing Indicator */}
           {isProcessing && (

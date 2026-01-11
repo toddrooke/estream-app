@@ -26,6 +26,14 @@ import {
 import { QrSigningService } from '@/services/governance';
 import { SparkService, SparkResolution } from '@/services/spark';
 import { RealSparkScanner, createSparkScanner } from '@/services/sparkScanner';
+import { 
+  isNativeSparkScannerAvailable, 
+  startNativeScanning, 
+  stopNativeScanning, 
+  getNativeScanStatus,
+  resetNativeScanner,
+  ScanStatus,
+} from '@/services/nativeSparkScanner';
 
 // ============================================================================
 // Camera Import (conditional - avoid conditional hook calls)
@@ -87,6 +95,7 @@ interface SparkDetectionState {
   motionScore: number;
   sparkConfidence: number;
   message: string;
+  isNative: boolean;
 }
 
 function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX.Element | null {
@@ -107,6 +116,7 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
     motionScore: 0,
     sparkConfidence: 0,
     message: 'Point camera at Spark pattern',
+    isNative: false,
   });
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const scannerRef = useRef<RealSparkScanner | null>(null);
@@ -131,10 +141,98 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
     };
   }, [device]);
 
-  const startRealSparkDetection = () => {
-    console.log('[Spark] Starting real frame analysis');
+  const startRealSparkDetection = async () => {
+    const useNative = isNativeSparkScannerAvailable();
+    console.log('[Spark] Starting frame analysis, native:', useNative);
     
-    // Create scanner with callbacks
+    if (useNative) {
+      // Use native Kotlin module for real frame analysis
+      try {
+        await startNativeScanning();
+        
+        setSparkState({
+          status: 'scanning',
+          progress: 0,
+          framesAnalyzed: 0,
+          particlesDetected: 0,
+          motionScore: 0,
+          sparkConfidence: 0,
+          message: 'Native scanning active...',
+          isNative: true,
+        });
+        
+        // Poll for status updates
+        captureIntervalRef.current = setInterval(async () => {
+          try {
+            const status = await getNativeScanStatus();
+            
+            setSparkState(s => ({
+              ...s,
+              progress: status.progress,
+              framesAnalyzed: status.frameCount,
+              motionScore: status.motionScore,
+              message: status.motionDetected 
+                ? '✓ Spark motion detected!' 
+                : status.progress < 0.3 
+                  ? 'Analyzing frames...' 
+                  : 'Tracking motion...',
+            }));
+            
+            // Auto-complete when motion detected and enough time passed
+            if (status.progress >= 1 && status.motionDetected) {
+              clearInterval(captureIntervalRef.current);
+              
+              const result = await stopNativeScanning();
+              
+              if (result.success) {
+                setSparkState(s => ({
+                  ...s,
+                  status: 'detected',
+                  motionScore: result.motionScore,
+                  message: `✓ Spark verified! Motion: ${(result.motionScore * 100).toFixed(0)}%`,
+                }));
+                
+                setTimeout(() => {
+                  onCodeScanned(JSON.stringify({
+                    type: 'device-registration',
+                    inviteCode: 'SPARK' + Date.now().toString(36).toUpperCase().slice(0, 8),
+                    detectedVia: 'native-frame-processor',
+                    framesAnalyzed: result.framesAnalyzed,
+                    motionScore: result.motionScore,
+                    direction: result.direction,
+                  }));
+                }, 500);
+              } else {
+                setSparkState(s => ({
+                  ...s,
+                  status: 'error',
+                  message: 'Motion not consistent. Try again.',
+                }));
+              }
+            }
+            
+            // Timeout after 10 seconds
+            if (status.durationMs > 10000) {
+              clearInterval(captureIntervalRef.current);
+              await resetNativeScanner();
+              setSparkState(s => ({
+                ...s,
+                status: 'error',
+                message: 'Spark not detected. Ensure pattern is visible.',
+              }));
+            }
+          } catch (e) {
+            console.error('[Spark] Status poll error:', e);
+          }
+        }, 100); // 10Hz status polling
+        
+        return;
+      } catch (e) {
+        console.error('[Spark] Native scanner failed, falling back:', e);
+      }
+    }
+    
+    // Fallback: JS-based scanner with heuristics
     scannerRef.current = createSparkScanner({
       onProgress: (progress, frame) => {
         setSparkState(s => ({
@@ -195,6 +293,7 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
       motionScore: 0,
       sparkConfidence: 0,
       message: 'Hold camera steady on Spark...',
+      isNative: false,
     });
 
     // Start periodic frame capture
@@ -239,7 +338,8 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={true}
-        photo={true}
+        photo={true} 
+        pixelFormat="yuv"
       />
       
       {/* Spark Detection Overlay */}
@@ -261,15 +361,17 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
         
         {/* Debug info */}
         <View style={styles.sparkDebugInfo}>
+          <Text style={[styles.sparkDetailText, sparkState.isNative && { color: '#00ffd5' }]}>
+            Mode: {sparkState.isNative ? '⚡ Native' : '📊 JS'}
+          </Text>
           <Text style={styles.sparkDetailText}>
             Frames: {sparkState.framesAnalyzed}
           </Text>
-          <Text style={styles.sparkDetailText}>
-            Particles: {sparkState.particlesDetected}
-          </Text>
-          <Text style={styles.sparkDetailText}>
-            Confidence: {(sparkState.sparkConfidence * 100).toFixed(0)}%
-          </Text>
+          {!sparkState.isNative && (
+            <Text style={styles.sparkDetailText}>
+              Confidence: {(sparkState.sparkConfidence * 100).toFixed(0)}%
+            </Text>
+          )}
           {sparkState.motionScore > 0 && (
             <Text style={[styles.sparkDetailText, { color: '#00ff88' }]}>
               Motion: {(sparkState.motionScore * 100).toFixed(0)}%

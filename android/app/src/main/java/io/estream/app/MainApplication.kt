@@ -10,6 +10,7 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.load
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.soloader.SoLoader
+import io.estream.app.spark.SparkScannerPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -25,6 +26,8 @@ class MainApplication : Application(), ReactApplication {
               add(QuicClientPackage())
               // ML-DSA-87 Post-Quantum signing module
               add(MlDsa87Package())
+              // Native Spark scanner for motion detection
+              add(SparkScannerPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

@@ -15,7 +15,7 @@ const CAPTURE_INTERVAL_MS = 100; // 10 FPS for analysis
 const MIN_FRAMES = 30;
 const MIN_DURATION_MS = 2500;
 const BRIGHTNESS_THRESHOLD = 180;
-const MOTION_THRESHOLD = 0.6;
+const MOTION_THRESHOLD = 0.4; // Lower threshold for heuristic detection
 
 export interface Point {
   x: number;
@@ -243,14 +243,15 @@ export class RealSparkScanner {
     const particles: Point[] = [];
     
     // Generate expected orbital positions
+    // All particles move in the SAME direction for consistent motion detection
     const particleCount = 12;
-    const baseSpeed = 0.6; // radians per second
+    const baseSpeed = 0.5; // radians per second (consistent orbital speed)
     
     for (let i = 0; i < particleCount; i++) {
       const phase = (i / particleCount) * Math.PI * 2;
-      const speed = baseSpeed * (0.8 + (i % 3) * 0.2);
-      const radius = 0.25 + (i % 4) * 0.05;
-      const direction = i % 2 === 0 ? 1 : -1;
+      const speed = baseSpeed * (0.9 + (i % 3) * 0.1); // Slight variation
+      const radius = 0.28 + (i % 4) * 0.03; // Orbital zone 0.28-0.37
+      const direction = 1; // ALL particles move same direction (CCW)
       
       const angle = phase + t * speed * direction;
       

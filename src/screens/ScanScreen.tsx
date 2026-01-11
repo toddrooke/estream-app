@@ -850,7 +850,7 @@ const styles = StyleSheet.create({
 
   // Camera
   cameraContainer: {
-    aspectRatio: 1,
+    aspectRatio: 0.85,  // Taller than wide to fit full circle
     backgroundColor: '#1a1a1a',
     borderRadius: 16,
     overflow: 'hidden',

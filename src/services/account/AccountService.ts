@@ -207,8 +207,8 @@ export const AccountService = new AccountServiceImpl();
 /**
  * Generate pubkey hash from raw public key bytes
  */
-export async function hashPubkey(pubkey: Uint8Array): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest('SHA-256', pubkey);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+export function hashPubkey(pubkey: Uint8Array): string {
+  const { sha256 } = require('@/utils/crypto');
+  const hashArray = sha256(pubkey);
+  return Array.from(hashArray).map(b => (b as number).toString(16).padStart(2, '0')).join('');
 }

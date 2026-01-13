@@ -20,7 +20,7 @@ import {
 import { SvgXml } from 'react-native-svg';
 import { useAccount, useSparkParams } from '@/services/account';
 import { useVault, useTrustBadge } from '@/services/vault';
-import { getIdentityNftService } from '@/services/identity';
+import { getNativeIdentityService } from '@/services/identity';
 
 // ============================================================================
 // Spark SVG Renderer (inline for React Native)
@@ -192,40 +192,41 @@ export default function AccountScreen(): React.JSX.Element {
     setEditName('');
   }, []);
 
-  const handleMintNft = useCallback(async () => {
+  const handleCreateIdentity = useCallback(async () => {
     if (!account?.pubkeyHash || !account?.displayName) {
       Alert.alert('Error', 'Account not ready');
       return;
     }
 
     Alert.alert(
-      'Mint Identity NFT',
-      'This will create your eStream Identity NFT on Solana devnet.\n\nYou\'ll need a small amount of SOL for the transaction fee.',
+      'Create eStream Identity',
+      'This will register your identity on the eStream network.\n\nYour identity will be synced across all your devices.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Mint',
+          text: 'Create',
           onPress: async () => {
             setIsMinting(true);
             try {
-              const identityService = getIdentityNftService('devnet');
+              const identityService = getNativeIdentityService();
               
-              const result = await identityService.mintViaApi(publicKey || '', {
-                pubkeyHash: account.pubkeyHash,
+              const result = await identityService.createIdentity({
                 displayName: account.displayName,
+                pubkeyHash: account.pubkeyHash,
+                roles: ['user'],
               });
 
-              if (result.success && result.mintAddress) {
-                await updateAccount({ identityNftMint: result.mintAddress });
+              if (result.success && result.identityId) {
+                await updateAccount({ identityNftMint: result.identityId });
                 Alert.alert(
                   'Success!',
-                  `Identity NFT minted!\n\nMint: ${result.mintAddress.slice(0, 8)}...`
+                  `eStream Identity created!\n\nID: ${result.identityId}`
                 );
               } else {
-                Alert.alert('Minting Failed', result.error || 'Unknown error');
+                Alert.alert('Creation Failed', result.error || 'Unknown error');
               }
             } catch (error) {
-              Alert.alert('Error', error instanceof Error ? error.message : 'Minting failed');
+              Alert.alert('Error', error instanceof Error ? error.message : 'Creation failed');
             } finally {
               setIsMinting(false);
             }
@@ -233,7 +234,7 @@ export default function AccountScreen(): React.JSX.Element {
         },
       ]
     );
-  }, [account, publicKey, updateAccount]);
+  }, [account, updateAccount]);
   
   if (isLoading) {
     return (
@@ -325,9 +326,9 @@ export default function AccountScreen(): React.JSX.Element {
           </View>
           
           <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Identity NFT</Text>
+            <Text style={styles.detailLabel}>eStream Identity</Text>
             <Text style={[styles.detailValue, !account?.identityNftMint && styles.notMinted]}>
-              {account?.identityNftMint ? 'Minted ✓' : 'Not minted'}
+              {account?.identityNftMint ? 'Registered ✓' : 'Not registered'}
             </Text>
           </View>
         </View>
@@ -360,25 +361,25 @@ export default function AccountScreen(): React.JSX.Element {
         {!account?.identityNftMint && (
           <TouchableOpacity 
             style={[styles.actionButton, isMinting && styles.actionButtonDisabled]}
-            onPress={handleMintNft}
+            onPress={handleCreateIdentity}
             disabled={isMinting}
           >
             {isMinting ? (
               <View style={styles.mintingRow}>
                 <ActivityIndicator color="#000" size="small" />
-                <Text style={styles.actionButtonText}>  Minting...</Text>
+                <Text style={styles.actionButtonText}>  Creating...</Text>
               </View>
             ) : (
-              <Text style={styles.actionButtonText}>Mint Identity NFT</Text>
+              <Text style={styles.actionButtonText}>Create eStream Identity</Text>
             )}
           </TouchableOpacity>
         )}
         
         {account?.identityNftMint && (
           <View style={styles.mintedCard}>
-            <Text style={styles.mintedTitle}>✓ Identity NFT Minted</Text>
+            <Text style={styles.mintedTitle}>✓ eStream Identity Registered</Text>
             <Text style={styles.mintedAddress}>
-              {account.identityNftMint.slice(0, 12)}...{account.identityNftMint.slice(-8)}
+              {account.identityNftMint}
             </Text>
           </View>
         )}

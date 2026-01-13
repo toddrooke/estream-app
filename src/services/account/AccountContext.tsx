@@ -60,7 +60,7 @@ export function AccountProvider({ children }: AccountProviderProps) {
       try {
         // Get the public key from vault
         const pubkey = await getPublicKey();
-        const pubkeyHash = await hashPubkey(pubkey);
+        const pubkeyHash = hashPubkey(pubkey);
         
         // Check if account already exists
         const existing = await AccountService.load();

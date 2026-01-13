@@ -34,6 +34,7 @@ import {
   resetNativeScanner,
   ScanStatus,
 } from '@/services/nativeSparkScanner';
+import { authenticateWithSpark, SparkAuthChallenge, SparkAuthResult } from '@/services/sparkAuth';
 
 // ============================================================================
 // Camera Import (conditional - avoid conditional hook calls)
@@ -148,19 +149,31 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const frameProcessor = useFrameProcessorHook((frame: any) => {
     'worklet';
-    // Call native scanSpark plugin via the initialized plugin instance
-    // The plugin analyzes each YUV frame for bright particles
+    // Call native scanSpark plugin registered via FrameProcessorPluginRegistry
+    // Try both plugin approaches for compatibility
     if (sparkPlugin) {
       sparkPlugin.call(frame);
+    } else if (typeof (frame as any).scanSpark === 'function') {
+      // Fallback: direct frame method (older VisionCamera approach)
+      (frame as any).scanSpark();
     }
   }, []);
 
   // Initialize scanner and start capture when camera is ready
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
-    if (device && cameraRef.current) {
-      startRealSparkDetection();
+    console.log('[CameraView] useEffect triggered, device:', !!device, 'cameraRef:', !!cameraRef.current);
+    
+    // Start scanning automatically when device is available
+    // cameraRef.current may not be set immediately, so we use a small delay
+    if (device) {
+      const timer = setTimeout(() => {
+        console.log('[CameraView] Starting scan after delay');
+        startRealSparkDetection();
+      }, 500);
+      return () => clearTimeout(timer);
     }
+    
     return () => {
       if (captureIntervalRef.current) {
         clearInterval(captureIntervalRef.current);
@@ -240,31 +253,66 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                         message: `✓ Matched! Completing registration...`,
                       }));
                       
-                      // Complete registration via governance lattice
-                      onCodeScanned(JSON.stringify({
-                        type: 'device-registration',
-                        inviteCode: match.inviteCode,
-                        motionSeed: match.motionSeed,
-                        orgId: match.orgId,
-                        detectedVia: 'spark-motion',
-                        motionScore: result.motionScore,
-                      }));
-                    } else {
-                      setSparkState(s => ({
-                        ...s,
-                        status: 'error',
-                        message: 'No pending registrations found',
-                      }));
-                    }
-                  }
-                } catch (e) {
-                  console.error('[Spark] Failed to match governance request:', e);
-                  setSparkState(s => ({
-                    ...s,
-                    status: 'error', 
-                    message: 'Failed to connect to governance lattice',
-                  }));
-                }
+                            // Complete registration via governance lattice
+                            onCodeScanned(JSON.stringify({
+                              type: 'device-registration',
+                              inviteCode: match.inviteCode,
+                              motionSeed: match.motionSeed,
+                              orgId: match.orgId,
+                              detectedVia: 'spark-motion',
+                              motionScore: result.motionScore,
+                            }));
+                          } else {
+                            // Check for Console login challenge
+                            const loginRes = await fetch('https://console.estream.dev/api/auth/pending-challenges');
+                            if (loginRes.ok) {
+                              const { challenges } = await loginRes.json() as { challenges: SparkAuthChallenge[] };
+                              if (challenges && challenges.length > 0) {
+                                const challenge = challenges[0];
+                                setSparkState(s => ({
+                                  ...s,
+                                  status: 'verifying',
+                                  message: 'Console login detected. Signing...',
+                                }));
+                                
+                                // Sign and submit
+                                const authResult = await authenticateWithSpark({
+                                  ...challenge,
+                                  consoleUrl: 'https://console.estream.dev',
+                                });
+                                
+                                if (authResult.success) {
+                                  setSparkState(s => ({
+                                    ...s,
+                                    status: 'success' as const,
+                                    message: '✓ Authenticated! Check Console.',
+                                  }));
+                                } else {
+                                  setSparkState(s => ({
+                                    ...s,
+                                    status: 'error',
+                                    message: authResult.error || 'Authentication failed',
+                                  }));
+                                }
+                                return;
+                              }
+                            }
+                            
+                            setSparkState(s => ({
+                              ...s,
+                              status: 'error',
+                              message: 'No pending registrations found',
+                            }));
+                          }
+                        }
+                      } catch (e) {
+                        console.error('[Spark] Failed to match governance request:', e);
+                        setSparkState(s => ({
+                          ...s,
+                          status: 'error', 
+                          message: 'Failed to connect to governance lattice',
+                        }));
+                      }
               } else {
                 setSparkState(s => ({
                   ...s,
@@ -529,7 +577,8 @@ export default function ScanScreen(): React.JSX.Element {
       let decoded: string;
       try {
         // React Native compatible base64 decode
-        decoded = decodeURIComponent(escape(global.atob ? global.atob(data) : data));
+        // @ts-expect-error React Native global
+        decoded = decodeURIComponent(escape(globalThis.atob ? globalThis.atob(data) : data));
       } catch {
         decoded = data;
       }

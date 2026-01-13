@@ -14,6 +14,7 @@ public class QuicClientPackage implements ReactPackage {
     public List<NativeModule> createNativeModules(ReactApplicationContext reactContext) {
         List<NativeModule> modules = new ArrayList<>();
         modules.add(new QuicClientModule(reactContext));
+        modules.add(new EstreamClientModule(reactContext));
         return modules;
     }
 

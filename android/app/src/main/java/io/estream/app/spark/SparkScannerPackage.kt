@@ -12,14 +12,21 @@ import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
 class SparkScannerPackage : ReactPackage {
     
     companion object {
+        @Volatile
+        private var isRegistered = false
+        
         init {
             // Register the Spark frame processor with Vision Camera
-            try {
-                FrameProcessorPluginRegistry.addFrameProcessorPlugin("scanSpark") { proxy, options ->
-                    SparkFrameProcessor(proxy, options)
+            if (!isRegistered) {
+                try {
+                    FrameProcessorPluginRegistry.addFrameProcessorPlugin("scanSpark") { proxy, options ->
+                        SparkFrameProcessor(proxy, options)
+                    }
+                    isRegistered = true
+                } catch (e: Throwable) {
+                    // Vision Camera not available, already registered, or other error
+                    isRegistered = true // Prevent retry
                 }
-            } catch (e: Exception) {
-                // Vision Camera not available or already registered
             }
         }
     }

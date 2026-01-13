@@ -29,10 +29,10 @@ class SparkScannerModule(reactContext: ReactApplicationContext) :
         @JvmField
         var startTime: Long = 0
         
-        private const val MIN_FRAMES = 25
+        private const val MIN_FRAMES = 15
         private const val MAX_FRAMES = 100
-        private const val MOTION_THRESHOLD = 0.35
-        private const val MIN_MOTION_SAMPLES = 10
+        private const val MOTION_THRESHOLD = 0.03  // Very low for testing - accept any motion
+        private const val MIN_MOTION_SAMPLES = 5
         
         // Called from frame processor
         @JvmStatic
@@ -82,16 +82,20 @@ class SparkScannerModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startScanning(promise: Promise) {
+        android.util.Log.i("SparkScanner", "startScanning() called")
         try {
             isScanning = true
             clearFrames()
             startTime = System.currentTimeMillis()
+            
+            android.util.Log.i("SparkScanner", "isScanning set to TRUE, startTime=$startTime")
             
             promise.resolve(WritableNativeMap().apply {
                 putBoolean("success", true)
                 putString("status", "scanning")
             })
         } catch (e: Exception) {
+            android.util.Log.e("SparkScanner", "startScanning failed: ${e.message}")
             promise.reject("SPARK_ERROR", "Failed to start: ${e.message}")
         }
     }
@@ -154,7 +158,10 @@ class SparkScannerModule(reactContext: ReactApplicationContext) :
     private fun analyzeMotion(): MotionResult {
         val frames = getFramesCopy()
         
+        android.util.Log.d("SparkMotion", "Analyzing ${frames.size} frames")
+        
         if (frames.size < MIN_FRAMES) {
+            android.util.Log.d("SparkMotion", "Insufficient frames: ${frames.size} < $MIN_FRAMES")
             return MotionResult(0.0, "insufficient")
         }
 
@@ -206,7 +213,10 @@ class SparkScannerModule(reactContext: ReactApplicationContext) :
             }
         }
 
+        android.util.Log.d("SparkMotion", "Motion: cwVotes=$cwVotes, ccwVotes=$ccwVotes, total=$totalMotion")
+        
         if (totalMotion < MIN_MOTION_SAMPLES) {
+            android.util.Log.d("SparkMotion", "Insufficient motion samples: $totalMotion < $MIN_MOTION_SAMPLES")
             return MotionResult(0.0, "no_motion")
         }
 
@@ -218,6 +228,9 @@ class SparkScannerModule(reactContext: ReactApplicationContext) :
             ccwVotes > cwVotes * 1.2 -> "ccw"
             else -> "mixed"
         }
+
+        android.util.Log.d("SparkMotion", "Result: consistency=$consistency, direction=$direction, threshold=$MOTION_THRESHOLD")
+        android.util.Log.d("SparkMotion", "Spark detected: ${consistency > MOTION_THRESHOLD}")
 
         return MotionResult(consistency, direction)
     }

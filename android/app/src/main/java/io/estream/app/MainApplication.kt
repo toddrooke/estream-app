@@ -11,6 +11,7 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.soloader.SoLoader
 import io.estream.app.spark.SparkScannerPackage
+import io.estream.app.spark.SparkAuthPackage
 import io.estream.app.spark.SparkFrameProcessor
 import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
 
@@ -30,6 +31,8 @@ class MainApplication : Application(), ReactApplication {
               add(MlDsa87Package())
               // Native Spark scanner for motion detection
               add(SparkScannerPackage())
+              // Spark authentication (Rust renderer + ML-DSA signing)
+              add(SparkAuthPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

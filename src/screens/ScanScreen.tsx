@@ -235,106 +235,111 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                   message: `✓ Motion detected! Matching governance request...`,
                 }));
                 
-                // Poll for pending governance requests and match motion seed
+                // First, check for Console login challenge (most common case)
+                // Try edge-proxy first (ESLite persistence), then Pages
                 try {
-                  const pendingRes = await fetch('https://console.estream.dev/api/devices/pending');
-                  if (pendingRes.ok) {
-                    const { registrations } = await pendingRes.json();
+                  const consoleUrls = [
+                    'https://edge.estream.dev',
+                    'https://estream-console.pages.dev',
+                    'https://console.estream.dev',
+                  ];
+                  
+                  let challenges: SparkAuthChallenge[] = [];
+                  let consoleUrl = consoleUrls[0];
+                  
+                  for (const url of consoleUrls) {
+                    try {
+                      console.log(`[Spark] Checking ${url}/api/auth/pending-challenges`);
+                      const loginRes = await fetch(`${url}/api/auth/pending-challenges`);
+                      if (loginRes.ok) {
+                        const data = await loginRes.json() as { challenges: SparkAuthChallenge[] };
+                        console.log(`[Spark] Found ${data.challenges?.length || 0} challenges at ${url}`);
+                        if (data.challenges && data.challenges.length > 0) {
+                          challenges = data.challenges;
+                          consoleUrl = url;
+                          break;
+                        }
+                      }
+                    } catch (e) {
+                      console.debug(`[Spark] ${url} not available:`, e);
+                    }
+                  }
+                  
+                  if (challenges.length > 0) {
+                    const challenge = challenges[0];
+                    setSparkState(s => ({
+                      ...s,
+                      status: 'verifying',
+                      message: 'Console login detected. Signing...',
+                    }));
                     
-                    // Find matching registration by comparing motion characteristics
-                    // In production: derive expected motion from each seed and compare
-                    // For now: take the first pending registration
-                    if (registrations && registrations.length > 0) {
-                      const match = registrations[0];
-                      
+                    // Sign and submit
+                    const authResult = await authenticateWithSpark({
+                      ...challenge,
+                      consoleUrl,
+                    });
+                    
+                    if (authResult.success) {
                       setSparkState(s => ({
                         ...s,
-                        status: 'detected',
-                        message: `✓ Matched! Completing registration...`,
+                        status: 'success' as const,
+                        message: '✓ Authenticated! Check Console.',
                       }));
+                    } else {
+                      setSparkState(s => ({
+                        ...s,
+                        status: 'error',
+                        message: authResult.error || 'Authentication failed',
+                      }));
+                    }
+                    return;
+                  }
+                  
+                  // No console login challenges, check for device registration
+                  try {
+                    const pendingRes = await fetch('https://console.estream.dev/api/devices/pending');
+                    if (pendingRes.ok) {
+                      const { registrations } = await pendingRes.json();
                       
-                            // Complete registration via governance lattice
-                            onCodeScanned(JSON.stringify({
-                              type: 'device-registration',
-                              inviteCode: match.inviteCode,
-                              motionSeed: match.motionSeed,
-                              orgId: match.orgId,
-                              detectedVia: 'spark-motion',
-                              motionScore: result.motionScore,
-                            }));
-                          } else {
-                            // Check for Console login challenge
-                            // Try edge-proxy first (ESLite persistence), then Pages
-                            const consoleUrls = [
-                              'https://edge.estream.dev',
-                              'https://estream-console.pages.dev',
-                              'https://console.estream.dev',
-                            ];
-                            
-                            let challenges: SparkAuthChallenge[] = [];
-                            let consoleUrl = consoleUrls[0];
-                            
-                            for (const url of consoleUrls) {
-                              try {
-                                const loginRes = await fetch(`${url}/api/auth/pending-challenges`);
-                                if (loginRes.ok) {
-                                  const data = await loginRes.json() as { challenges: SparkAuthChallenge[] };
-                                  if (data.challenges && data.challenges.length > 0) {
-                                    challenges = data.challenges;
-                                    consoleUrl = url;
-                                    break;
-                                  }
-                                }
-                              } catch (e) {
-                                console.debug(`[Spark] ${url} not available:`, e);
-                              }
-                            }
-                            
-                            if (challenges.length > 0) {
-                              const challenge = challenges[0];
-                              setSparkState(s => ({
-                                ...s,
-                                status: 'verifying',
-                                message: 'Console login detected. Signing...',
-                              }));
-                              
-                              // Sign and submit
-                              const authResult = await authenticateWithSpark({
-                                ...challenge,
-                                consoleUrl,
-                              });
-                              
-                              if (authResult.success) {
-                                setSparkState(s => ({
-                                  ...s,
-                                  status: 'success' as const,
-                                  message: '✓ Authenticated! Check Console.',
-                                }));
-                              } else {
-                                setSparkState(s => ({
-                                  ...s,
-                                  status: 'error',
-                                  message: authResult.error || 'Authentication failed',
-                                }));
-                              }
-                              return;
-                            }
-                            
-                            setSparkState(s => ({
-                              ...s,
-                              status: 'error',
-                              message: 'No pending registrations found',
-                            });
-                          }
-                        }
-                      } catch (e) {
-                        console.error('[Spark] Failed to match governance request:', e);
+                      if (registrations && registrations.length > 0) {
+                        const match = registrations[0];
+                        
                         setSparkState(s => ({
                           ...s,
-                          status: 'error', 
-                          message: 'Failed to connect to governance lattice',
+                          status: 'detected',
+                          message: `✓ Matched! Completing registration...`,
                         }));
+                        
+                        // Complete registration via governance lattice
+                        onCodeScanned(JSON.stringify({
+                          type: 'device-registration',
+                          inviteCode: match.inviteCode,
+                          motionSeed: match.motionSeed,
+                          orgId: match.orgId,
+                          detectedVia: 'spark-motion',
+                          motionScore: result.motionScore,
+                        }));
+                        return;
                       }
+                    }
+                  } catch (e) {
+                    console.debug('[Spark] Device registration check failed:', e);
+                  }
+                  
+                  // Nothing found
+                  setSparkState(s => ({
+                    ...s,
+                    status: 'error',
+                    message: 'No pending registrations found',
+                  }));
+                } catch (e) {
+                  console.error('[Spark] Failed to match governance request:', e);
+                  setSparkState(s => ({
+                    ...s,
+                    status: 'error', 
+                    message: 'Failed to connect to governance lattice',
+                  }));
+                }
               } else {
                 setSparkState(s => ({
                   ...s,

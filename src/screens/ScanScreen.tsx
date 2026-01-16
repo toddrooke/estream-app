@@ -264,45 +264,66 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                             }));
                           } else {
                             // Check for Console login challenge
-                            const loginRes = await fetch('https://console.estream.dev/api/auth/pending-challenges');
-                            if (loginRes.ok) {
-                              const { challenges } = await loginRes.json() as { challenges: SparkAuthChallenge[] };
-                              if (challenges && challenges.length > 0) {
-                                const challenge = challenges[0];
+                            // Try Cloudflare Pages deployment first, then custom domain
+                            const consoleUrls = [
+                              'https://estream-console.pages.dev',
+                              'https://console.estream.dev',
+                            ];
+                            
+                            let challenges: SparkAuthChallenge[] = [];
+                            let consoleUrl = consoleUrls[0];
+                            
+                            for (const url of consoleUrls) {
+                              try {
+                                const loginRes = await fetch(`${url}/api/auth/pending-challenges`);
+                                if (loginRes.ok) {
+                                  const data = await loginRes.json() as { challenges: SparkAuthChallenge[] };
+                                  if (data.challenges && data.challenges.length > 0) {
+                                    challenges = data.challenges;
+                                    consoleUrl = url;
+                                    break;
+                                  }
+                                }
+                              } catch (e) {
+                                console.debug(`[Spark] ${url} not available:`, e);
+                              }
+                            }
+                            
+                            if (challenges.length > 0) {
+                              const challenge = challenges[0];
+                              setSparkState(s => ({
+                                ...s,
+                                status: 'verifying',
+                                message: 'Console login detected. Signing...',
+                              }));
+                              
+                              // Sign and submit
+                              const authResult = await authenticateWithSpark({
+                                ...challenge,
+                                consoleUrl,
+                              });
+                              
+                              if (authResult.success) {
                                 setSparkState(s => ({
                                   ...s,
-                                  status: 'verifying',
-                                  message: 'Console login detected. Signing...',
+                                  status: 'success' as const,
+                                  message: '✓ Authenticated! Check Console.',
                                 }));
-                                
-                                // Sign and submit
-                                const authResult = await authenticateWithSpark({
-                                  ...challenge,
-                                  consoleUrl: 'https://console.estream.dev',
-                                });
-                                
-                                if (authResult.success) {
-                                  setSparkState(s => ({
-                                    ...s,
-                                    status: 'success' as const,
-                                    message: '✓ Authenticated! Check Console.',
-                                  }));
-                                } else {
-                                  setSparkState(s => ({
-                                    ...s,
-                                    status: 'error',
-                                    message: authResult.error || 'Authentication failed',
-                                  }));
-                                }
-                                return;
+                              } else {
+                                setSparkState(s => ({
+                                  ...s,
+                                  status: 'error',
+                                  message: authResult.error || 'Authentication failed',
+                                }));
                               }
+                              return;
                             }
                             
                             setSparkState(s => ({
                               ...s,
                               status: 'error',
                               message: 'No pending registrations found',
-                            }));
+                            });
                           }
                         }
                       } catch (e) {

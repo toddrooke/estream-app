@@ -20,7 +20,7 @@ import {
   ScanResult,
 } from './nativeSparkScanner';
 
-const { EstreamClientModule } = NativeModules;
+const { MlDsa87Module } = NativeModules;
 
 // Minimum scan duration (per patent spec)
 const MIN_SCAN_DURATION_MS = 2500;
@@ -31,6 +31,21 @@ export interface SparkAuthChallenge {
   nonce: string;
   timestamp: number;
   consoleUrl: string;
+}
+
+/**
+ * Dev mode: Use local proxy via ADB reverse when device can't reach internet
+ * Set to true when testing via USB tethering
+ */
+const USE_DEV_PROXY = __DEV__;
+const DEV_PROXY_URL = 'http://localhost:8080';
+
+function getConsoleUrl(challenge: SparkAuthChallenge): string {
+  if (USE_DEV_PROXY) {
+    console.log('[SparkAuth] Using dev proxy:', DEV_PROXY_URL);
+    return DEV_PROXY_URL;
+  }
+  return challenge.consoleUrl;
 }
 
 export interface SparkAuthResult {
@@ -133,6 +148,16 @@ export async function authenticateWithSpark(
 }
 
 /**
+ * Canonical Spark auth message format (v1)
+ * Both Seeker and Console must use this EXACT format for signing/verification
+ * 
+ * Format: spark:v1:{challengeId}:{nonce}:{timestamp}
+ */
+function buildSparkAuthMessage(challenge: SparkAuthChallenge): string {
+  return `spark:v1:${challenge.challengeId}:${challenge.nonce}:${challenge.timestamp}`;
+}
+
+/**
  * Submit Spark authentication (motion already verified)
  * Call this after ScanScreen has already detected motion
  *
@@ -146,46 +171,126 @@ export async function submitSparkAuth(
   onProgress?: (progress: number, status: string) => void
 ): Promise<SparkAuthResult> {
   try {
-    onProgress?.(0.8, 'Signing challenge...');
+    onProgress?.(0.6, 'Checking keypair...');
 
-    // Sign the challenge with ML-DSA-87
-    const message = `${challenge.nonce}:${challenge.timestamp}`;
-    let signature: string;
-    let publicKeyHash: string;
-
+    // Check if we have a keypair
+    let hasKeypair = false;
     try {
-      // Call native signing function
-      const signatureResult = await signChallenge(message);
-      signature = signatureResult.signature;
-      publicKeyHash = signatureResult.publicKeyHash;
+      hasKeypair = await MlDsa87Module.hasKeypair();
     } catch (e) {
+      console.warn('[SparkAuth] Error checking keypair:', e);
+    }
+
+    if (!hasKeypair) {
       return {
         success: false,
         verified: false,
-        error: `Signing failed: ${e}`,
+        error: 'No ML-DSA-87 keypair found. Please set up your device first.',
         scanResult,
       };
     }
 
+    onProgress?.(0.7, 'Preparing signature...');
+
+    // Get the full public key for verification (2592 bytes = 5184 hex chars)
+    let publicKey: string;
+    try {
+      publicKey = await MlDsa87Module.getPublicKey();
+      console.log('[SparkAuth] Got public key:', publicKey.length, 'hex chars');
+      
+      if (publicKey.length !== 5184) {
+        return {
+          success: false,
+          verified: false,
+          error: `Invalid public key length: ${publicKey.length} (expected 5184)`,
+          scanResult,
+        };
+      }
+    } catch (e) {
+      return {
+        success: false,
+        verified: false,
+        error: `Failed to get public key: ${e}`,
+        scanResult,
+      };
+    }
+
+    onProgress?.(0.8, 'Signing challenge...');
+
+    // Build the canonical message that Console will also construct
+    const message = buildSparkAuthMessage(challenge);
+    console.log('[SparkAuth] Signing message:', message);
+    
+    // Base64 encode for native module
+    const messageB64 = btoa(message);
+    
+    let signature: string;
+    try {
+      // Use signWithoutAuth for Spark (quick auth, not governance)
+      // This should work if the key was created with AUTH_NONE
+      const signResult = await MlDsa87Module.signWithoutAuth(messageB64);
+      signature = signResult.signature;
+      console.log('[SparkAuth] Signature length:', signature.length, 'hex chars');
+      
+      // ML-DSA-87 signatures are 4627 bytes = 9254 hex chars
+      if (signature.length !== 9254) {
+        console.warn('[SparkAuth] Unexpected signature length:', signature.length);
+      }
+    } catch (e) {
+      console.log('[SparkAuth] signWithoutAuth failed, trying signWithAuth:', e);
+      // If signWithoutAuth fails (auth required), try with biometric auth
+      try {
+        const signResult = await MlDsa87Module.signWithAuth(
+          messageB64,
+          'Spark Authentication',
+          'Authenticate to eStream Console'
+        );
+        signature = signResult.signature;
+      } catch (authError) {
+        return {
+          success: false,
+          verified: false,
+          error: `Signing failed: ${authError}`,
+          scanResult,
+        };
+      }
+    }
+
+    // Compute public key hash (first 32 hex chars = 16 bytes)
+    const publicKeyHash = publicKey.slice(0, 32);
+
     onProgress?.(0.9, 'Submitting verification...');
 
-    // Submit to Console
-    const response = await fetch(`${challenge.consoleUrl}/api/auth/spark-verify`, {
+    // Submit to Console with FULL public key for cryptographic verification
+    const requestBody = {
+      challengeId: challenge.challengeId,
+      nonce: challenge.nonce,
+      timestamp: challenge.timestamp,
+      signature,       // 9254 hex chars (4627 bytes)
+      publicKey,       // 5184 hex chars (2592 bytes) - for verification
+      publicKeyHash,   // 32 hex chars (16 bytes) - for identity lookup
+    };
+    
+    console.log('[SparkAuth] Sending verification request:', {
+      challengeId: requestBody.challengeId,
+      signatureLen: requestBody.signature.length,
+      publicKeyLen: requestBody.publicKey.length,
+    });
+
+    const response = await fetch(`${getConsoleUrl(challenge)}/api/auth/spark-verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        challengeId: challenge.challengeId,
-        signature,
-        publicKeyHash,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      const errorMsg = (errorData as { error?: string; details?: string }).error || 'Verification failed';
+      const details = (errorData as { details?: string }).details || '';
       return {
         success: false,
         verified: false,
-        error: (errorData as { error?: string }).error || 'Verification failed',
+        error: details ? `${errorMsg}: ${details}` : errorMsg,
         scanResult,
       };
     }
@@ -200,6 +305,7 @@ export async function submitSparkAuth(
       scanResult,
     };
   } catch (e) {
+    console.error('[SparkAuth] Authentication error:', e);
     return {
       success: false,
       verified: false,
@@ -208,37 +314,4 @@ export async function submitSparkAuth(
   }
 }
 
-/**
- * Sign challenge with ML-DSA-87 (via native module)
- */
-async function signChallenge(
-  message: string
-): Promise<{ signature: string; publicKeyHash: string }> {
-  // Try native signing first
-  if (EstreamClientModule?.signMessage) {
-    const resultBytes = await EstreamClientModule.signMessage(message);
-    if (resultBytes) {
-      const resultJson = new TextDecoder().decode(new Uint8Array(resultBytes));
-      const result = JSON.parse(resultJson);
-      if (result.success) {
-        return {
-          signature: result.signature,
-          publicKeyHash: result.publicKeyHash,
-        };
-      }
-      throw new Error(result.error || 'Signing failed');
-    }
-  }
-
-  // Fallback: Generate temporary keypair for demo
-  // In production, this should ALWAYS use the hardware-backed key
-  const tempSignature = btoa(message + ':signed:' + Date.now());
-  const tempPkHash = btoa('temp-pk-' + Date.now()).slice(0, 32);
-
-  console.warn('[SparkAuth] Using temporary signature (native signing not available)');
-
-  return {
-    signature: tempSignature,
-    publicKeyHash: tempPkHash,
-  };
-}
+// Note: Old signChallenge function removed - now using MlDsa87Module directly in submitSparkAuth

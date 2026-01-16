@@ -264,8 +264,9 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                             }));
                           } else {
                             // Check for Console login challenge
-                            // Try Cloudflare Pages deployment first, then custom domain
+                            // Try edge-proxy first (ESLite persistence), then Pages
                             const consoleUrls = [
+                              'https://edge.estream.dev',
                               'https://estream-console.pages.dev',
                               'https://console.estream.dev',
                             ];

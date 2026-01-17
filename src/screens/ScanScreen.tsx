@@ -241,32 +241,52 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                   const consoleUrls = [
                     'https://edge.estream.dev',
                     'https://estream-console.pages.dev',
-                    'https://console.estream.dev',
                   ];
                   
                   let challenges: SparkAuthChallenge[] = [];
                   let consoleUrl = consoleUrls[0];
+                  let lastError = '';
                   
                   for (const url of consoleUrls) {
                     try {
                       console.log(`[Spark] Checking ${url}/api/auth/pending-challenges`);
-                      const loginRes = await fetch(`${url}/api/auth/pending-challenges`);
+                      setSparkState(s => ({ ...s, message: `Checking ${url.replace('https://', '')}...` }));
+                      
+                      const loginRes = await fetch(`${url}/api/auth/pending-challenges`, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' },
+                      });
+                      
+                      console.log(`[Spark] Response from ${url}: ${loginRes.status}`);
+                      
                       if (loginRes.ok) {
                         const data = await loginRes.json() as { challenges: SparkAuthChallenge[] };
-                        console.log(`[Spark] Found ${data.challenges?.length || 0} challenges at ${url}`);
+                        console.log(`[Spark] Found ${data.challenges?.length || 0} challenges at ${url}:`, JSON.stringify(data.challenges?.map(c => c.challenge_id?.slice(0, 8))));
+                        
                         if (data.challenges && data.challenges.length > 0) {
-                          challenges = data.challenges;
-                          consoleUrl = url;
-                          break;
+                          // Filter expired challenges
+                          const validChallenges = data.challenges.filter(c => c.expires_at > Date.now());
+                          console.log(`[Spark] Valid (non-expired) challenges: ${validChallenges.length}`);
+                          
+                          if (validChallenges.length > 0) {
+                            challenges = validChallenges;
+                            consoleUrl = url;
+                            break;
+                          }
                         }
+                      } else {
+                        lastError = `${url}: HTTP ${loginRes.status}`;
                       }
-                    } catch (e) {
-                      console.debug(`[Spark] ${url} not available:`, e);
+                    } catch (e: any) {
+                      console.warn(`[Spark] ${url} fetch error:`, e?.message || e);
+                      lastError = `${url}: ${e?.message || 'Network error'}`;
                     }
                   }
                   
                   if (challenges.length > 0) {
                     const challenge = challenges[0];
+                    console.log(`[Spark] Using challenge ${challenge.challenge_id?.slice(0, 8)}... from ${consoleUrl}`);
+                    
                     setSparkState(s => ({
                       ...s,
                       status: 'verifying',
@@ -295,49 +315,19 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                     return;
                   }
                   
-                  // No console login challenges, check for device registration
-                  try {
-                    const pendingRes = await fetch('https://console.estream.dev/api/devices/pending');
-                    if (pendingRes.ok) {
-                      const { registrations } = await pendingRes.json();
-                      
-                      if (registrations && registrations.length > 0) {
-                        const match = registrations[0];
-                        
-                        setSparkState(s => ({
-                          ...s,
-                          status: 'detected',
-                          message: `✓ Matched! Completing registration...`,
-                        }));
-                        
-                        // Complete registration via governance lattice
-                        onCodeScanned(JSON.stringify({
-                          type: 'device-registration',
-                          inviteCode: match.inviteCode,
-                          motionSeed: match.motionSeed,
-                          orgId: match.orgId,
-                          detectedVia: 'spark-motion',
-                          motionScore: result.motionScore,
-                        }));
-                        return;
-                      }
-                    }
-                  } catch (e) {
-                    console.debug('[Spark] Device registration check failed:', e);
-                  }
-                  
-                  // Nothing found
+                  // No valid challenges found
+                  console.log(`[Spark] No valid challenges found. Last error: ${lastError}`);
                   setSparkState(s => ({
                     ...s,
                     status: 'error',
-                    message: 'No pending registrations found',
+                    message: lastError ? `No challenges: ${lastError}` : 'No pending login requests found. Make sure Console is open.',
                   }));
-                } catch (e) {
-                  console.error('[Spark] Failed to match governance request:', e);
+                } catch (e: any) {
+                  console.error('[Spark] Failed to check challenges:', e);
                   setSparkState(s => ({
                     ...s,
                     status: 'error', 
-                    message: 'Failed to connect to governance lattice',
+                    message: `Error: ${e?.message || 'Network failed'}`,
                   }));
                 }
               } else {
@@ -467,7 +457,33 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   }
 
   const isDetected = sparkState.status === 'detected' || sparkState.sparkConfidence > 0.7;
-  const progressColor = isDetected ? '#00ff88' : '#00ffd5';
+  const isTerminal = sparkState.status === 'error' || sparkState.status === 'success';
+  const progressColor = isDetected ? '#00ff88' : sparkState.status === 'error' ? '#ff4444' : '#00ffd5';
+  
+  // Reset and scan again
+  const handleScanAgain = async () => {
+    console.log('[Spark] Resetting scanner for another attempt');
+    
+    // Reset native scanner if it was used
+    if (sparkState.isNative) {
+      await resetNativeScanner();
+    }
+    
+    // Reset state
+    setSparkState({
+      status: 'scanning',
+      progress: 0,
+      framesAnalyzed: 0,
+      particlesDetected: 0,
+      motionScore: 0,
+      sparkConfidence: 0,
+      message: 'Point camera at Spark pattern',
+      isNative: false,
+    });
+    
+    // Restart detection
+    startRealSparkDetection();
+  };
 
   return (
     <View style={styles.cameraViewContainer}>
@@ -511,6 +527,18 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
               Frames: {sparkState.framesAnalyzed} | Motion: {(sparkState.motionScore * 100).toFixed(0)}%
             </Text>
           </View>
+          
+          {/* Scan Again button when in terminal state */}
+          {isTerminal && (
+            <TouchableOpacity 
+              style={[styles.scanAgainButton, sparkState.status === 'success' && styles.scanAgainButtonSuccess]} 
+              onPress={handleScanAgain}
+            >
+              <Text style={styles.scanAgainButtonText}>
+                {sparkState.status === 'success' ? '✓ Scan Another' : '↻ Scan Again'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
       
@@ -1115,6 +1143,24 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 11,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  scanAgainButton: {
+    marginTop: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(0, 180, 255, 0.3)',
+    borderRadius: 25,
+    borderWidth: 2,
+    borderColor: '#00b4ff',
+  },
+  scanAgainButtonSuccess: {
+    backgroundColor: 'rgba(0, 255, 136, 0.3)',
+    borderColor: '#00ff88',
+  },
+  scanAgainButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
   },
   
   stopButton: {

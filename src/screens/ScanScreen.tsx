@@ -34,7 +34,7 @@ import {
   resetNativeScanner,
   ScanStatus,
 } from '@/services/nativeSparkScanner';
-import { authenticateWithSpark, SparkAuthChallenge, SparkAuthResult } from '@/services/sparkAuth';
+import { authenticateWithSpark, SparkAuthChallenge, SparkAuthChallengeRaw, SparkAuthResult, normalizeChallenge } from '@/services/sparkAuth';
 
 // ============================================================================
 // Camera Import (conditional - avoid conditional hook calls)
@@ -238,16 +238,25 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                 // First, check for Console login challenge (most common case)
                 // Try edge-proxy first (ESLite persistence), then Pages
                 try {
-                  const consoleUrls = [
+                  // Check all eStream-based services for pending login challenges
+                  // Each service has its own edge/API for challenge storage
+                  const serviceUrls = [
+                    // eStream Console
                     'https://edge.estream.dev',
                     'https://estream-console.pages.dev',
+                    // TakeTitle
+                    'https://taketitle.io',
+                    'https://taketitle-web.pages.dev',
+                    // PolyMessenger  
+                    'https://polymessenger.app',
+                    'https://polymessenger-console.pages.dev',
                   ];
                   
                   let challenges: SparkAuthChallenge[] = [];
-                  let consoleUrl = consoleUrls[0];
+                  let consoleUrl = serviceUrls[0];
                   let lastError = '';
                   
-                  for (const url of consoleUrls) {
+                  for (const url of serviceUrls) {
                     try {
                       console.log(`[Spark] Checking ${url}/api/auth/pending-challenges`);
                       setSparkState(s => ({ ...s, message: `Checking ${url.replace('https://', '')}...` }));
@@ -260,12 +269,15 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                       console.log(`[Spark] Response from ${url}: ${loginRes.status}`);
                       
                       if (loginRes.ok) {
-                        const data = await loginRes.json() as { challenges: SparkAuthChallenge[] };
+                        const data = await loginRes.json() as { challenges: SparkAuthChallengeRaw[] };
                         console.log(`[Spark] Found ${data.challenges?.length || 0} challenges at ${url}:`, JSON.stringify(data.challenges?.map(c => c.challenge_id?.slice(0, 8))));
                         
                         if (data.challenges && data.challenges.length > 0) {
-                          // Filter expired challenges
-                          const validChallenges = data.challenges.filter(c => c.expires_at > Date.now());
+                          // Filter expired challenges and normalize to app format
+                          const now = Date.now();
+                          const validChallenges = data.challenges
+                            .filter(c => c.expires_at > now)
+                            .map(c => normalizeChallenge(c, url));
                           console.log(`[Spark] Valid (non-expired) challenges: ${validChallenges.length}`);
                           
                           if (validChallenges.length > 0) {
@@ -285,7 +297,7 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                   
                   if (challenges.length > 0) {
                     const challenge = challenges[0];
-                    console.log(`[Spark] Using challenge ${challenge.challenge_id?.slice(0, 8)}... from ${consoleUrl}`);
+                    console.log(`[Spark] Using challenge ${challenge.challengeId?.slice(0, 8)}... from ${consoleUrl}`);
                     
                     setSparkState(s => ({
                       ...s,

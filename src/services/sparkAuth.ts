@@ -26,11 +26,51 @@ const { MlDsa87Module } = NativeModules;
 const MIN_SCAN_DURATION_MS = 2500;
 const MOTION_MATCH_THRESHOLD = 0.6;
 
+/** Challenge as returned from the API (snake_case) */
+export interface SparkAuthChallengeRaw {
+  challenge_id: string;
+  session_id: string;
+  display_code: string;
+  expires_at: number;
+  created_at: number;
+  payload: string; // base64 encoded SparkAuthPayload
+}
+
+/** Challenge normalized for use in the app (camelCase) */
 export interface SparkAuthChallenge {
   challengeId: string;
+  sessionId: string;
   nonce: string;
   timestamp: number;
-  consoleUrl: string;
+  expiresAt: number;
+  consoleUrl: string;  // The service URL that issued this challenge
+  serviceId?: string;  // e.g., "console.estream.io", "taketitle.io", "polymessenger.app"
+}
+
+/** Normalize API response to app format */
+export function normalizeChallenge(raw: SparkAuthChallengeRaw, consoleUrl: string): SparkAuthChallenge {
+  // Decode payload to get additional fields
+  let nonce = raw.challenge_id.slice(0, 32); // Default nonce from challenge ID
+  let serviceId: string | undefined;
+  
+  try {
+    const payloadJson = atob(raw.payload);
+    const payload = JSON.parse(payloadJson);
+    nonce = payload.challenge_nonce || nonce;
+    serviceId = payload.service;
+  } catch (e) {
+    console.debug('[SparkAuth] Failed to parse payload:', e);
+  }
+  
+  return {
+    challengeId: raw.challenge_id,
+    sessionId: raw.session_id,
+    nonce,
+    timestamp: raw.created_at,
+    expiresAt: raw.expires_at,
+    consoleUrl,
+    serviceId,
+  };
 }
 
 /**

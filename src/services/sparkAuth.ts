@@ -182,12 +182,23 @@ export async function submitSparkAuth(
     }
 
     if (!hasKeypair) {
-      return {
-        success: false,
-        verified: false,
-        error: 'No ML-DSA-87 keypair found. Please set up your device first.',
-        scanResult,
-      };
+      // Auto-generate keypair on first use
+      onProgress?.(0.65, 'Generating keypair...');
+      console.log('[SparkAuth] No keypair found, generating one');
+      
+      try {
+        // Generate with no auth for now (can upgrade later)
+        await MlDsa87Module.generateKeypair(0);
+        console.log('[SparkAuth] Keypair generated successfully');
+      } catch (genError: any) {
+        console.error('[SparkAuth] Failed to generate keypair:', genError);
+        return {
+          success: false,
+          verified: false,
+          error: `Failed to generate keypair: ${genError?.message || genError}`,
+          scanResult,
+        };
+      }
     }
 
     onProgress?.(0.7, 'Preparing signature...');

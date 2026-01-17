@@ -241,15 +241,16 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                   // Check all eStream-based services for pending login challenges
                   // Each service has its own edge/API for challenge storage
                   const serviceUrls = [
-                    // eStream Console
+                    // eStream Console (edge-proxy has ESLite persistence)
                     'https://edge.estream.dev',
                     'https://estream-console.pages.dev',
-                    // TakeTitle
-                    'https://taketitle.io',
-                    'https://taketitle-web.pages.dev',
-                    // PolyMessenger  
+                    // TakeTitle (worker with ESLite DO)
+                    'https://api.taketitle.io',
+                    'https://staging.taketitle.io',
+                    'https://taketitle.pages.dev',
+                    // PolyMessenger (Pages Functions with KV)
+                    'https://poly-console.pages.dev',
                     'https://polymessenger.app',
-                    'https://polymessenger-console.pages.dev',
                   ];
                   
                   let challenges: SparkAuthChallenge[] = [];

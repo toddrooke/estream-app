@@ -34,17 +34,12 @@ export interface SparkAuthChallenge {
 }
 
 /**
- * Dev mode: Use local proxy via ADB reverse when device can't reach internet
- * Set to true when testing via USB tethering
+ * Get the console URL for auth submission.
+ * Always use the real consoleUrl - localhost proxy doesn't work on mobile devices.
  */
-const USE_DEV_PROXY = __DEV__;
-const DEV_PROXY_URL = 'http://localhost:8080';
-
 function getConsoleUrl(challenge: SparkAuthChallenge): string {
-  if (USE_DEV_PROXY) {
-    console.log('[SparkAuth] Using dev proxy:', DEV_PROXY_URL);
-    return DEV_PROXY_URL;
-  }
+  // Use the consoleUrl from the challenge (edge.estream.dev or similar)
+  console.log('[SparkAuth] Using console URL:', challenge.consoleUrl);
   return challenge.consoleUrl;
 }
 

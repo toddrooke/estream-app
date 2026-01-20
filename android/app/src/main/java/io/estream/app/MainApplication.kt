@@ -12,8 +12,9 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.soloader.SoLoader
 import io.estream.app.spark.SparkScannerPackage
 import io.estream.app.spark.SparkAuthPackage
-import io.estream.app.spark.SparkFrameProcessor
-import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
+// VisionCamera frame processor disabled - requires react-native-vision-camera
+// import io.estream.app.spark.SparkFrameProcessor
+// import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
 
 class MainApplication : Application(), ReactApplication {
 
@@ -52,14 +53,9 @@ class MainApplication : Application(), ReactApplication {
     super.onCreate()
     SoLoader.init(this, false)
     
-    // Register Spark frame processor with VisionCamera
-    try {
-      FrameProcessorPluginRegistry.addFrameProcessorPlugin("scanSpark") { proxy, options ->
-        SparkFrameProcessor(proxy, options)
-      }
-    } catch (e: Exception) {
-      // VisionCamera not loaded yet or already registered
-    }
+    // VisionCamera frame processor registration disabled
+    // Requires react-native-vision-camera package to be installed
+    // Re-enable when VisionCamera is added to dependencies
     
     if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
       // If you opted-in for the New Architecture, we load the native entry point for this app.

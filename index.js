@@ -16,9 +16,15 @@ global.Buffer = Buffer;
 // 4. TextEncoder/TextDecoder - React Native 0.74+ includes these natively
 // No polyfill needed
 
-import {AppRegistry} from 'react-native';
+import {AppRegistry, LogBox} from 'react-native';
 import App from './src/App'; // Main App with tabs and governance
 // import App from './src/AppTest'; // Test mode - no vault dependency
 import {name as appName} from './app.json';
+
+// Suppress deprecation warnings from dependencies using legacy React Native APIs
+LogBox.ignoreLogs([
+  'Clipboard has been extracted from react-native',
+  'ProgressBarAndroid has been extracted from react-native',
+]);
 
 AppRegistry.registerComponent(appName, () => App);

@@ -33,6 +33,8 @@ class MainApplication : Application(), ReactApplication {
               add(SparkScannerPackage())
               // Spark authentication (Rust renderer + ML-DSA signing)
               add(SparkAuthPackage())
+              // ETFA (Embedded Timing Fingerprint Authentication) module
+              add(ETFAPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

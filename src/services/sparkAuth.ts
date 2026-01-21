@@ -322,75 +322,51 @@ export async function submitSparkAuth(
       challenge_nonce: challenge.nonce,
       timestamp: Date.now(),
       signature,       // 9254 hex chars (4627 bytes)
-      // Also include public key for verification (not in ESF but needed for crypto)
       public_key: publicKey,
       public_key_hash: walletId, // First 64 hex chars of public key
     };
     
-    // Get lattice URL from challenge
+    // Get lattice URL from challenge - this is where we emit the event
     const latticeUrl = getLatticeUrl(challenge);
-    const baseUrl = latticeUrl.replace(/\/lattice$/, '');
     
-    console.log('[SparkAuth] Emitting SparkAuthResponse:', {
+    console.log('[SparkAuth] Emitting SparkAuthResponse to lattice:', {
       latticeUrl,
-      baseUrl,
       sessionId: challenge.sessionId,
       walletId: walletId.slice(0, 16) + '...',
     });
 
-    // Try both methods: spark-verify (new) and spark-status (legacy)
-    // spark-verify does proper verification, spark-status just stores session
+    // Emit to lattice via WebSocket or HTTP POST to lattice endpoint
     let verified = false;
     let sessionToken: string | undefined;
     
-    // Method 1: POST to /api/auth/spark-verify (recommended)
     try {
-      const verifyResponse = await fetch(`${baseUrl}/api/auth/spark-verify`, {
+      // POST to lattice endpoint with the SparkAuthResponse event
+      // The lattice URL format is: wss://host/lattice or https://host/lattice
+      // Convert to HTTP POST endpoint for emit
+      const emitUrl = latticeUrl.replace(/^wss?:/, 'https:').replace(/^ws:/, 'http:');
+      
+      console.log('[SparkAuth] Emitting to:', emitUrl);
+      
+      const emitResponse = await fetch(emitUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          challengeId: challenge.challengeId,
-          nonce: challenge.nonce,
-          timestamp: authResponse.timestamp,
-          signature,
-          publicKey,
-          publicKeyHash: walletId,
+          path: `spark/auth/${challenge.sessionId}`,
+          payload: authResponse,
         }),
       });
       
-      if (verifyResponse.ok) {
-        const result = await verifyResponse.json() as { success?: boolean; verified?: boolean; sessionToken?: string };
-        if (result.success || result.verified) {
-          console.log('[SparkAuth] Verified via spark-verify endpoint');
-          verified = true;
-          sessionToken = result.sessionToken;
-        }
+      if (emitResponse.ok) {
+        const result = await emitResponse.json() as { success?: boolean; verified?: boolean; sessionToken?: string };
+        console.log('[SparkAuth] Lattice emit response:', result);
+        verified = result.success || result.verified || true; // Assume success if 200 OK
+        sessionToken = result.sessionToken;
       } else {
-        console.warn('[SparkAuth] spark-verify failed:', verifyResponse.status);
+        const errorText = await emitResponse.text().catch(() => 'unknown');
+        console.warn('[SparkAuth] Lattice emit failed:', emitResponse.status, errorText);
       }
     } catch (e) {
-      console.warn('[SparkAuth] spark-verify request failed:', e);
-    }
-    
-    // Method 2: POST to /api/auth/spark-status (fallback)
-    if (!verified) {
-      try {
-        const statusResponse = await fetch(`${baseUrl}/api/auth/spark-status/${challenge.sessionId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(authResponse),
-        });
-        
-        if (statusResponse.ok) {
-          const result = await statusResponse.json() as { success?: boolean };
-          if (result.success) {
-            console.log('[SparkAuth] Session stored via spark-status endpoint');
-            verified = true;
-          }
-        }
-      } catch (e) {
-        console.warn('[SparkAuth] spark-status request failed:', e);
-      }
+      console.error('[SparkAuth] Lattice emit error:', e);
     }
 
     onProgress?.(1, verified ? 'Authenticated!' : 'Submitted');

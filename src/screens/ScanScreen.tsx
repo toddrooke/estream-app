@@ -238,19 +238,11 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                 // First, check for Console login challenge (most common case)
                 // Try edge-proxy first (ESLite persistence), then Pages
                 try {
-                  // Check all eStream-based services for pending login challenges
-                  // Each service has its own edge/API for challenge storage
+                  // Check eStream edge-proxy for pending login challenges
+                  // All eStream-based services should post challenges to edge.estream.dev
                   const serviceUrls = [
-                    // eStream Console (edge-proxy has ESLite persistence)
+                    // Primary: eStream edge-proxy (has ESLite persistence)
                     'https://edge.estream.dev',
-                    'https://estream-console.pages.dev',
-                    // TakeTitle (worker with ESLite DO)
-                    'https://api.taketitle.io',
-                    'https://staging.taketitle.io',
-                    'https://taketitle.pages.dev',
-                    // PolyMessenger (Pages Functions with KV)
-                    'https://poly-console.pages.dev',
-                    'https://polymessenger.app',
                   ];
                   
                   let challenges: SparkAuthChallenge[] = [];
@@ -318,12 +310,20 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                         status: 'success' as const,
                         message: '✓ Authenticated! Check Console.',
                       }));
+                      // Auto-restart scanning after 2 seconds for next Spark
+                      setTimeout(() => {
+                        resetNativeScanner().then(() => startRealSparkDetection());
+                      }, 2000);
                     } else {
                       setSparkState(s => ({
                         ...s,
                         status: 'error',
                         message: authResult.error || 'Authentication failed',
                       }));
+                      // Auto-restart scanning after 1.5 seconds on error
+                      setTimeout(() => {
+                        resetNativeScanner().then(() => startRealSparkDetection());
+                      }, 1500);
                     }
                     return;
                   }
@@ -333,8 +333,12 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                   setSparkState(s => ({
                     ...s,
                     status: 'error',
-                    message: lastError ? `No challenges: ${lastError}` : 'No pending login requests found. Make sure Console is open.',
+                    message: lastError ? `No challenges: ${lastError}` : 'No pending login. Open Console first.',
                   }));
+                  // Auto-restart scanning after 2 seconds
+                  setTimeout(() => {
+                    resetNativeScanner().then(() => startRealSparkDetection());
+                  }, 2000);
                 } catch (e: any) {
                   console.error('[Spark] Failed to check challenges:', e);
                   setSparkState(s => ({
@@ -342,25 +346,36 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                     status: 'error', 
                     message: `Error: ${e?.message || 'Network failed'}`,
                   }));
+                  // Auto-restart scanning after 2 seconds
+                  setTimeout(() => {
+                    resetNativeScanner().then(() => startRealSparkDetection());
+                  }, 2000);
                 }
               } else {
                 setSparkState(s => ({
                   ...s,
                   status: 'error',
-                  message: 'Motion not consistent. Try again.',
+                  message: 'Motion not consistent. Retrying...',
                 }));
+                // Auto-restart immediately on motion inconsistency
+                setTimeout(() => {
+                  resetNativeScanner().then(() => startRealSparkDetection());
+                }, 1000);
               }
             }
             
-            // Timeout after 10 seconds
+            // Timeout after 10 seconds - auto restart instead of stopping
             if (status.durationMs > 10000) {
               clearInterval(captureIntervalRef.current);
-              await resetNativeScanner();
               setSparkState(s => ({
                 ...s,
-                status: 'error',
-                message: 'Spark not detected. Ensure pattern is visible.',
+                status: 'scanning',
+                progress: 0,
+                message: 'Searching for Spark...',
               }));
+              // Auto-restart
+              await resetNativeScanner();
+              startRealSparkDetection();
             }
           } catch (e) {
             console.error('[Spark] Status poll error:', e);
@@ -472,31 +487,6 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
   const isDetected = sparkState.status === 'detected' || sparkState.sparkConfidence > 0.7;
   const isTerminal = sparkState.status === 'error' || sparkState.status === 'success';
   const progressColor = isDetected ? '#00ff88' : sparkState.status === 'error' ? '#ff4444' : '#00ffd5';
-  
-  // Reset and scan again
-  const handleScanAgain = async () => {
-    console.log('[Spark] Resetting scanner for another attempt');
-    
-    // Reset native scanner if it was used
-    if (sparkState.isNative) {
-      await resetNativeScanner();
-    }
-    
-    // Reset state
-    setSparkState({
-      status: 'scanning',
-      progress: 0,
-      framesAnalyzed: 0,
-      particlesDetected: 0,
-      motionScore: 0,
-      sparkConfidence: 0,
-      message: 'Point camera at Spark pattern',
-      isNative: false,
-    });
-    
-    // Restart detection
-    startRealSparkDetection();
-  };
 
   return (
     <View style={styles.cameraViewContainer}>
@@ -541,16 +531,11 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
             </Text>
           </View>
           
-          {/* Scan Again button when in terminal state */}
+          {/* Auto-restart indicator */}
           {isTerminal && (
-            <TouchableOpacity 
-              style={[styles.scanAgainButton, sparkState.status === 'success' && styles.scanAgainButtonSuccess]} 
-              onPress={handleScanAgain}
-            >
-              <Text style={styles.scanAgainButtonText}>
-                {sparkState.status === 'success' ? '✓ Scan Another' : '↻ Scan Again'}
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.autoRestartText}>
+              {sparkState.status === 'success' ? 'Scan another Spark...' : 'Retrying...'}
+            </Text>
           )}
         </View>
       </View>
@@ -575,10 +560,27 @@ export default function ScanScreen(): React.JSX.Element {
   const [lastScanned, setLastScanned] = useState<ParsedRequest | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<string>('unknown');
+  const [cameraPreloaded, setCameraPreloaded] = useState(false);
 
-  // Check permission on mount
+  // Preload camera permission and warm up on mount for faster start
   useEffect(() => {
-    checkCameraPermission();
+    const preloadCamera = async () => {
+      await checkCameraPermission();
+      // If permission already granted, mark as preloaded for instant start
+      if (CAMERA_AVAILABLE && CameraModule) {
+        try {
+          const status = Platform.OS === 'android'
+            ? await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA)
+            : await CameraModule.getCameraPermissionStatus();
+          if (status === 'granted' || status === true) {
+            setCameraPreloaded(true);
+          }
+        } catch (e) {
+          console.log('[ScanScreen] Preload check failed:', e);
+        }
+      }
+    };
+    preloadCamera();
   }, []);
 
   const checkCameraPermission = async () => {
@@ -853,58 +855,76 @@ export default function ScanScreen(): React.JSX.Element {
     setCameraActive(!cameraActive);
   };
 
+  // When camera is active, use full-screen non-scrolling layout
+  if (cameraActive && CAMERA_AVAILABLE) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.fullScreenCamera}>
+          <CameraView 
+            onCodeScanned={handleScannedCode}
+            onStopCamera={() => setCameraActive(false)}
+          />
+        </View>
+        
+        {/* Processing Indicator */}
+        {isProcessing && (
+          <View style={styles.processingOverlay}>
+            <ActivityIndicator color="#00ffd5" size="large" />
+            <Text style={styles.processingText}>Processing...</Text>
+          </View>
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  // Idle state: show instructions FIRST, then start button (no scrolling needed)
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+      <View style={styles.idleContainer}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.screenTitle}>✦ Scan Spark</Text>
-          <Text style={styles.subtitle}>Scan Spark patterns for registration & verification</Text>
+          <Text style={styles.subtitle}>Authenticate with Mission Control</Text>
         </View>
 
-        {/* Camera View */}
-        <View style={styles.cameraContainer}>
-          {cameraActive && CAMERA_AVAILABLE ? (
-            <CameraView 
-              onCodeScanned={handleScannedCode}
-              onStopCamera={() => setCameraActive(false)}
-            />
-          ) : (
-            <View style={styles.cameraPlaceholder}>
-              <Text style={styles.sparkIcon}>✦</Text>
-              <Text style={styles.cameraText}>
-                {CAMERA_AVAILABLE ? 'Tap to Scan Spark' : 'Camera Not Available'}
-              </Text>
-              <Text style={styles.cameraSubtext}>
-                {CAMERA_AVAILABLE 
-                  ? 'Point at a Spark pattern from Mission Control'
-                  : 'Use manual input below'}
-              </Text>
-              <TouchableOpacity 
-                style={styles.permissionButton}
-                onPress={toggleCamera}
-              >
-                <Text style={styles.permissionButtonText}>
-                  {CAMERA_AVAILABLE ? '✦ Start Scanner' : 'Use Manual Input'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Scan frame is now part of CameraView overlay */}
-
-          {/* Processing Indicator */}
-          {isProcessing && (
-            <View style={styles.processingOverlay}>
-              <ActivityIndicator color="#00ffd5" size="large" />
-              <Text style={styles.processingText}>Processing...</Text>
-            </View>
-          )}
+        {/* Instructions - shown BEFORE starting scan */}
+        <View style={styles.instructionsCard}>
+          <Text style={styles.instructionsTitle}>How to Use</Text>
+          <View style={styles.step}>
+            <Text style={styles.stepNumber}>1</Text>
+            <Text style={styles.stepText}>Open Mission Control and click "Login with Spark"</Text>
+          </View>
+          <View style={styles.step}>
+            <Text style={styles.stepNumber}>2</Text>
+            <Text style={styles.stepText}>A Spark pattern will appear (animated particles)</Text>
+          </View>
+          <View style={styles.step}>
+            <Text style={styles.stepNumber}>3</Text>
+            <Text style={styles.stepText}>Tap Start below, then point camera at Spark</Text>
+          </View>
+          <View style={styles.step}>
+            <Text style={styles.stepNumber}>4</Text>
+            <Text style={styles.stepText}>Hold steady for 2-3 seconds to authenticate</Text>
+          </View>
         </View>
 
-        {/* Manual input removed - Spark patterns are scanned visually */}
+        {/* Start Scanner Button - prominent placement */}
+        <View style={styles.startButtonContainer}>
+          <TouchableOpacity 
+            style={[styles.startButton, cameraPreloaded && styles.startButtonReady]}
+            onPress={toggleCamera}
+          >
+            <Text style={styles.startButtonIcon}>✦</Text>
+            <Text style={styles.startButtonText}>
+              {CAMERA_AVAILABLE ? 'Start Scanner' : 'Camera Not Available'}
+            </Text>
+            {cameraPreloaded && (
+              <Text style={styles.startButtonSubtext}>Ready</Text>
+            )}
+          </TouchableOpacity>
+        </View>
 
-        {/* Last Scanned */}
+        {/* Last Scanned - only if there's a recent result */}
         {lastScanned && (
           <View style={styles.lastScannedCard}>
             <Text style={styles.lastScannedTitle}>Last Scanned</Text>
@@ -917,49 +937,18 @@ export default function ScanScreen(): React.JSX.Element {
           </View>
         )}
 
-        {/* Instructions */}
-        <View style={styles.instructionsCard}>
-          <Text style={styles.instructionsTitle}>How to Use</Text>
-          <View style={styles.step}>
-            <Text style={styles.stepNumber}>1</Text>
-            <Text style={styles.stepText}>Open Mission Control and click "Register Device"</Text>
-          </View>
-          <View style={styles.step}>
-            <Text style={styles.stepNumber}>2</Text>
-            <Text style={styles.stepText}>A Spark pattern will appear (animated particles)</Text>
-          </View>
-          <View style={styles.step}>
-            <Text style={styles.stepNumber}>3</Text>
-            <Text style={styles.stepText}>Point this camera at the Spark for 2+ seconds</Text>
-          </View>
-          <View style={styles.step}>
-            <Text style={styles.stepNumber}>4</Text>
-            <Text style={styles.stepText}>Confirm to complete registration</Text>
-          </View>
+        {/* Status - minimal, at bottom */}
+        <View style={styles.statusFooter}>
+          <Text style={[
+            styles.statusText, 
+            permissionStatus === 'granted' ? styles.statusOk : styles.statusPending
+          ]}>
+            {permissionStatus === 'granted' ? '✓ Camera ready' : 
+             permissionStatus === 'denied' ? '✗ Camera denied - tap to open settings' : 
+             'Camera permission needed'}
+          </Text>
         </View>
-
-        {/* Status Card */}
-        <View style={styles.statusCard}>
-          <Text style={styles.statusTitle}>Scanner Status</Text>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Camera Library:</Text>
-            <Text style={[styles.statusValue, CAMERA_AVAILABLE ? styles.statusOk : styles.statusError]}>
-              {CAMERA_AVAILABLE ? '✓ Installed' : '✗ Not Installed'}
-            </Text>
-          </View>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Permission:</Text>
-            <Text style={[
-              styles.statusValue, 
-              permissionStatus === 'granted' ? styles.statusOk : styles.statusError
-            ]}>
-              {permissionStatus === 'granted' ? '✓ Granted' : 
-               permissionStatus === 'denied' ? '✗ Denied' : 
-               permissionStatus === 'unavailable' ? '- N/A' : '? Unknown'}
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -973,6 +962,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a0a',
   },
+  // Full screen camera mode
+  fullScreenCamera: {
+    flex: 1,
+  },
+  // Idle state container (no scrolling)
+  idleContainer: {
+    flex: 1,
+    padding: 20,
+    justifyContent: 'space-between',
+  },
   scrollView: {
     flex: 1,
   },
@@ -982,8 +981,8 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 24,
-    marginTop: 20,
+    marginBottom: 16,
+    marginTop: 10,
   },
   screenTitle: {
     fontSize: 28,
@@ -994,6 +993,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888',
     marginTop: 4,
+  },
+  // Start button - prominent
+  startButtonContainer: {
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  startButton: {
+    backgroundColor: '#1a2a3a',
+    borderRadius: 80,
+    width: 160,
+    height: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#00ffd5',
+    shadowColor: '#00ffd5',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  startButtonReady: {
+    borderColor: '#00ff88',
+    shadowColor: '#00ff88',
+  },
+  startButtonIcon: {
+    fontSize: 48,
+    color: '#00ffd5',
+    marginBottom: 4,
+  },
+  startButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  startButtonSubtext: {
+    fontSize: 10,
+    color: '#00ff88',
+    marginTop: 4,
+  },
+  // Status footer
+  statusFooter: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  statusText: {
+    fontSize: 12,
+    color: '#666',
+  },
+  statusPending: {
+    color: '#ffaa00',
   },
 
   // Camera
@@ -1157,23 +1207,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  scanAgainButton: {
-    marginTop: 20,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(0, 180, 255, 0.3)',
-    borderRadius: 25,
-    borderWidth: 2,
-    borderColor: '#00b4ff',
-  },
-  scanAgainButtonSuccess: {
-    backgroundColor: 'rgba(0, 255, 136, 0.3)',
-    borderColor: '#00ff88',
-  },
-  scanAgainButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
+  autoRestartText: {
+    marginTop: 16,
+    color: '#888',
+    fontSize: 12,
+    fontStyle: 'italic',
   },
   
   stopButton: {

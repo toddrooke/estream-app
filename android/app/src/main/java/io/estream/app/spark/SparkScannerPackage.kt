@@ -4,8 +4,7 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
-// VisionCamera frame processor disabled - requires react-native-vision-camera
-// import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
+import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
 
 /**
  * React Native package for Spark scanning
@@ -17,9 +16,14 @@ class SparkScannerPackage : ReactPackage {
         private var isRegistered = false
         
         init {
-            // VisionCamera frame processor registration disabled
-            // Requires react-native-vision-camera package
-            // Re-enable when VisionCamera is added to dependencies
+            // Register SparkFrameProcessor with VisionCamera
+            if (!isRegistered) {
+                FrameProcessorPluginRegistry.addFrameProcessorPlugin("scanSpark") { proxy, options ->
+                    SparkFrameProcessor(proxy, options)
+                }
+                isRegistered = true
+                android.util.Log.i("SparkScannerPackage", "SparkFrameProcessor registered as 'scanSpark'")
+            }
         }
     }
     

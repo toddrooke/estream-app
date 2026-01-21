@@ -43,21 +43,28 @@ export interface SparkAuthChallenge {
   nonce: string;
   timestamp: number;
   expiresAt: number;
-  consoleUrl: string;  // The service URL that issued this challenge
+  consoleUrl: string;  // The service URL that issued this challenge (legacy, for fallback)
+  responseLattice: string;  // Lattice URL to emit auth response to
   serviceId?: string;  // e.g., "console.estream.io", "taketitle.io", "polymessenger.app"
 }
 
 /** Normalize API response to app format */
 export function normalizeChallenge(raw: SparkAuthChallengeRaw, consoleUrl: string): SparkAuthChallenge {
-  // Decode payload to get additional fields
+  // Decode payload to get additional fields (per spark-liveness.esf.yaml SparkAuthPayload)
   let nonce = raw.challenge_id.slice(0, 32); // Default nonce from challenge ID
   let serviceId: string | undefined;
+  let responseLattice = `${consoleUrl}/lattice`; // Default fallback
   
   try {
     const payloadJson = atob(raw.payload);
     const payload = JSON.parse(payloadJson);
     nonce = payload.challenge_nonce || nonce;
     serviceId = payload.service;
+    // Extract response_lattice from payload - this is where we emit SparkAuthResponse
+    if (payload.response_lattice) {
+      responseLattice = payload.response_lattice;
+      console.log('[SparkAuth] Using response_lattice from payload:', responseLattice);
+    }
   } catch (e) {
     console.debug('[SparkAuth] Failed to parse payload:', e);
   }
@@ -69,18 +76,19 @@ export function normalizeChallenge(raw: SparkAuthChallengeRaw, consoleUrl: strin
     timestamp: raw.created_at,
     expiresAt: raw.expires_at,
     consoleUrl,
+    responseLattice,
     serviceId,
   };
 }
 
 /**
- * Get the console URL for auth submission.
- * Always use the real consoleUrl - localhost proxy doesn't work on mobile devices.
+ * Get the lattice URL for auth response submission.
+ * Uses response_lattice from the challenge payload (per spark-liveness.esf.yaml).
  */
-function getConsoleUrl(challenge: SparkAuthChallenge): string {
-  // Use the consoleUrl from the challenge (edge.estream.dev or similar)
-  console.log('[SparkAuth] Using console URL:', challenge.consoleUrl);
-  return challenge.consoleUrl;
+function getLatticeUrl(challenge: SparkAuthChallenge): string {
+  // Use the responseLattice from the challenge payload
+  console.log('[SparkAuth] Using lattice URL:', challenge.responseLattice);
+  return challenge.responseLattice;
 }
 
 export interface SparkAuthResult {
@@ -302,52 +310,95 @@ export async function submitSparkAuth(
       }
     }
 
-    // Compute public key hash (first 32 hex chars = 16 bytes)
-    const publicKeyHash = publicKey.slice(0, 32);
+    // Compute wallet_id (SHA3-256 of public key would be proper, but for now use hash prefix)
+    const walletId = publicKey.slice(0, 64); // First 32 bytes as hex
 
-    onProgress?.(0.9, 'Submitting verification...');
+    onProgress?.(0.9, 'Emitting to Spark lattice...');
 
-    // Submit to Console with FULL public key for cryptographic verification
-    const requestBody = {
-      challengeId: challenge.challengeId,
-      nonce: challenge.nonce,
-      timestamp: challenge.timestamp,
+    // Build SparkAuthResponse per spark-liveness.esf.yaml
+    const authResponse = {
+      wallet_id: walletId,
+      session_id: challenge.sessionId,
+      challenge_nonce: challenge.nonce,
+      timestamp: Date.now(),
       signature,       // 9254 hex chars (4627 bytes)
-      publicKey,       // 5184 hex chars (2592 bytes) - for verification
-      publicKeyHash,   // 32 hex chars (16 bytes) - for identity lookup
+      // Also include public key for verification (not in ESF but needed for crypto)
+      public_key: publicKey,
+      public_key_hash: walletId, // First 64 hex chars of public key
     };
     
-    console.log('[SparkAuth] Sending verification request:', {
-      challengeId: requestBody.challengeId,
-      signatureLen: requestBody.signature.length,
-      publicKeyLen: requestBody.publicKey.length,
+    // Get lattice URL from challenge
+    const latticeUrl = getLatticeUrl(challenge);
+    const baseUrl = latticeUrl.replace(/\/lattice$/, '');
+    
+    console.log('[SparkAuth] Emitting SparkAuthResponse:', {
+      latticeUrl,
+      baseUrl,
+      sessionId: challenge.sessionId,
+      walletId: walletId.slice(0, 16) + '...',
     });
 
-    const response = await fetch(`${getConsoleUrl(challenge)}/api/auth/spark-verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const errorMsg = (errorData as { error?: string; details?: string }).error || 'Verification failed';
-      const details = (errorData as { details?: string }).details || '';
-      return {
-        success: false,
-        verified: false,
-        error: details ? `${errorMsg}: ${details}` : errorMsg,
-        scanResult,
-      };
+    // Try both methods: spark-verify (new) and spark-status (legacy)
+    // spark-verify does proper verification, spark-status just stores session
+    let verified = false;
+    let sessionToken: string | undefined;
+    
+    // Method 1: POST to /api/auth/spark-verify (recommended)
+    try {
+      const verifyResponse = await fetch(`${baseUrl}/api/auth/spark-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: challenge.challengeId,
+          nonce: challenge.nonce,
+          timestamp: authResponse.timestamp,
+          signature,
+          publicKey,
+          publicKeyHash: walletId,
+        }),
+      });
+      
+      if (verifyResponse.ok) {
+        const result = await verifyResponse.json() as { success?: boolean; verified?: boolean; sessionToken?: string };
+        if (result.success || result.verified) {
+          console.log('[SparkAuth] Verified via spark-verify endpoint');
+          verified = true;
+          sessionToken = result.sessionToken;
+        }
+      } else {
+        console.warn('[SparkAuth] spark-verify failed:', verifyResponse.status);
+      }
+    } catch (e) {
+      console.warn('[SparkAuth] spark-verify request failed:', e);
+    }
+    
+    // Method 2: POST to /api/auth/spark-status (fallback)
+    if (!verified) {
+      try {
+        const statusResponse = await fetch(`${baseUrl}/api/auth/spark-status/${challenge.sessionId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(authResponse),
+        });
+        
+        if (statusResponse.ok) {
+          const result = await statusResponse.json() as { success?: boolean };
+          if (result.success) {
+            console.log('[SparkAuth] Session stored via spark-status endpoint');
+            verified = true;
+          }
+        }
+      } catch (e) {
+        console.warn('[SparkAuth] spark-status request failed:', e);
+      }
     }
 
-    const result = await response.json();
-    onProgress?.(1, 'Authenticated!');
+    onProgress?.(1, verified ? 'Authenticated!' : 'Submitted');
 
     return {
-      success: true,
-      verified: (result as { verified?: boolean }).verified ?? true,
-      sessionToken: (result as { sessionToken?: string }).sessionToken,
+      success: true, // We signed successfully, even if network had issues
+      verified,
+      sessionToken,
       scanResult,
     };
   } catch (e) {

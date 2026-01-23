@@ -24,7 +24,6 @@ import { AccountProvider, useAccount } from '@/services/account';
 import { ETFAService } from '@/services/etfa';
 
 // Screens
-import DevTools from '@/screens/DevTools';
 import GovernanceScreen from '@/screens/GovernanceScreen';
 import ScanScreen from '@/screens/ScanScreen';
 import AccountScreen from '@/screens/AccountScreen';
@@ -43,53 +42,6 @@ const DEFAULT_NODE_URL = 'http://localhost:8080';
 function HomeScreen(): React.JSX.Element {
   const { publicKey, error, isLoading } = useVault();
   const trustBadge = useTrustBadge();
-  
-  // ETFA state
-  const [etfaCollecting, setEtfaCollecting] = useState(false);
-  const [etfaCount, setEtfaCount] = useState(0);
-  const [etfaLastResult, setEtfaLastResult] = useState<string | null>(null);
-  
-  // ETFA collection handler
-  const handleCollectETFA = useCallback(async () => {
-    if (etfaCollecting) return;
-    
-    setEtfaCollecting(true);
-    setEtfaLastResult(null);
-    
-    try {
-      // Collect fingerprint (100 samples)
-      const fingerprint = await ETFAService.collectFingerprint(100, (op, progress) => {
-        console.log(`[ETFA] ${op}: ${(progress * 100).toFixed(0)}%`);
-      });
-      
-      if (!fingerprint) {
-        setEtfaLastResult('❌ Collection failed');
-        return;
-      }
-      
-      // Convert to lattice record
-      const record = ETFAService.toLatticeRecord(fingerprint);
-      
-      // Submit to lattice (alpha-devnet edge proxy)
-      const success = await ETFAService.submitToLattice(
-        record,
-        'https://edge.estream.dev'
-      );
-      
-      if (success) {
-        setEtfaCount(c => c + 1);
-        setEtfaLastResult(`✓ r5=${fingerprint.r5_mem_seq_to_rand.toFixed(3)}`);
-      } else {
-        setEtfaLastResult('⚠️ Saved locally (upload failed)');
-        setEtfaCount(c => c + 1);
-      }
-    } catch (e: any) {
-      console.error('[ETFA] Error:', e);
-      setEtfaLastResult(`❌ ${e.message || 'Unknown error'}`);
-    } finally {
-      setEtfaCollecting(false);
-    }
-  }, [etfaCollecting]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -113,32 +65,6 @@ function HomeScreen(): React.JSX.Element {
         <View style={[styles.trustBadge, { backgroundColor: getBadgeColor(trustBadge.color) }]}>
           <Text style={styles.trustIcon}>{trustBadge.icon}</Text>
           <Text style={styles.trustLabel}>{isLoading ? 'Loading...' : trustBadge.label}</Text>
-        </View>
-
-        {/* ETFA Collection Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>📊 Device Fingerprint (ETFA)</Text>
-          <Text style={styles.emptyText}>
-            Tap to collect timing fingerprint.{'\n'}
-            Test in different battery/thermal conditions.
-          </Text>
-          <TouchableOpacity
-            style={[styles.etfaButton, etfaCollecting && styles.etfaButtonDisabled]}
-            onPress={handleCollectETFA}
-            disabled={etfaCollecting}
-          >
-            {etfaCollecting ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text style={styles.etfaButtonText}>Collect Fingerprint</Text>
-            )}
-          </TouchableOpacity>
-          <View style={styles.etfaStats}>
-            <Text style={styles.etfaStatText}>Collected: {etfaCount}</Text>
-            {etfaLastResult && (
-              <Text style={styles.etfaLastResult}>{etfaLastResult}</Text>
-            )}
-          </View>
         </View>
 
         {/* Identity Card */}
@@ -197,13 +123,68 @@ function HomeScreen(): React.JSX.Element {
 function SettingsScreen(): React.JSX.Element {
   const { publicKey } = useVault();
   const trustBadge = useTrustBadge();
+  
+  // ETFA state (moved from Home)
+  const [etfaCollecting, setEtfaCollecting] = useState(false);
+  const [etfaCount, setEtfaCount] = useState(0);
+  const [etfaLastResult, setEtfaLastResult] = useState<string | null>(null);
+  
+  // ETFA collection handler
+  const handleCollectETFA = useCallback(async () => {
+    if (etfaCollecting) return;
+    
+    setEtfaCollecting(true);
+    setEtfaLastResult(null);
+    
+    try {
+      // Collect fingerprint (100 samples)
+      const fingerprint = await ETFAService.collectFingerprint(100, (op, progress) => {
+        console.log(`[ETFA] ${op}: ${(progress * 100).toFixed(0)}%`);
+      });
+      
+      if (!fingerprint) {
+        setEtfaLastResult('Collection failed');
+        return;
+      }
+      
+      // Convert to lattice record
+      const record = ETFAService.toLatticeRecord(fingerprint);
+      
+      // Submit to lattice (uses current network from NetworkConfig)
+      const { getNetworkEndpoints } = require('@estream/react-native');
+      const endpoints = getNetworkEndpoints();
+      const latticeUrl = endpoints.sparkLatticeUrl || 'https://edge.estream.dev';
+      
+      const success = await ETFAService.submitToLattice(record, latticeUrl);
+      
+      if (success) {
+        setEtfaCount(c => c + 1);
+        setEtfaLastResult(`r5=${fingerprint.r5_mem_seq_to_rand.toFixed(3)}`);
+      } else {
+        setEtfaLastResult('Saved locally (upload failed)');
+        setEtfaCount(c => c + 1);
+      }
+    } catch (e: any) {
+      console.error('[ETFA] Error:', e);
+      setEtfaLastResult(`Error: ${e.message || 'Unknown'}`);
+    } finally {
+      setEtfaCollecting(false);
+    }
+  }, [etfaCollecting]);
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>⚙️ Settings</Text>
+          <Text style={styles.screenTitle}>Settings</Text>
         </View>
+
+        {/* Network Environment Switcher - First for prominence */}
+        <NetworkSettings 
+          onEnvironmentChange={(env) => {
+            console.log('[Settings] Network switched to:', env);
+          }}
+        />
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Security</Text>
@@ -229,12 +210,31 @@ function SettingsScreen(): React.JSX.Element {
           </View>
         </View>
 
-        {/* Network Environment Switcher */}
-        <NetworkSettings 
-          onEnvironmentChange={(env) => {
-            console.log('[Settings] Network switched to:', env);
-          }}
-        />
+        {/* ETFA Device Fingerprint - moved from Home */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Device Fingerprint (ETFA)</Text>
+          <Text style={styles.emptyText}>
+            Collect timing fingerprint for device attestation.{'\n'}
+            Submits to currently selected network.
+          </Text>
+          <TouchableOpacity
+            style={[styles.etfaButton, etfaCollecting && styles.etfaButtonDisabled]}
+            onPress={handleCollectETFA}
+            disabled={etfaCollecting}
+          >
+            {etfaCollecting ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.etfaButtonText}>Collect Fingerprint</Text>
+            )}
+          </TouchableOpacity>
+          <View style={styles.etfaStats}>
+            <Text style={styles.etfaStatText}>Collected: {etfaCount}</Text>
+            {etfaLastResult && (
+              <Text style={styles.etfaLastResult}>{etfaLastResult}</Text>
+            )}
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -249,7 +249,6 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
     Account: '✦',
     Scan: '📷',
     Governance: '🔐',
-    Developer: '🔧',
     Settings: '⚙️',
   };
   
@@ -279,7 +278,6 @@ function AppContent(): React.JSX.Element {
       <Tab.Screen name="Account" component={AccountScreen} />
       <Tab.Screen name="Scan" component={ScanScreen} />
       <Tab.Screen name="Governance" component={GovernanceScreen} />
-      <Tab.Screen name="Developer" component={DevTools} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );

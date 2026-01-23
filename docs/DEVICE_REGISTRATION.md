@@ -64,7 +64,7 @@ The device sends a registration request to the edge proxy API:
 import { DeviceRegistryService } from '@/services/device/DeviceRegistryService';
 
 const registry = new DeviceRegistryService({
-  baseUrl: 'https://api.alpha-devnet.estream.io',
+  baseUrl: 'https://api.alpha-devnet.estream.dev',
 });
 
 const result = await registry.registerDevice({
@@ -167,9 +167,9 @@ The mobile app connects to the network selected in Settings:
 // NetworkConfig.ts
 export const NETWORKS = {
   'alpha-devnet': {
-    api: 'https://api.alpha-devnet.estream.io',
-    governance: 'https://governance.alpha-devnet.estream.io',
-    ws: 'wss://api.alpha-devnet.estream.io/ws',
+    api: 'https://api.alpha-devnet.estream.dev',
+    governance: 'https://governance.alpha-devnet.estream.dev',
+    ws: 'wss://api.alpha-devnet.estream.dev/ws',
   },
   // ... other networks
 };

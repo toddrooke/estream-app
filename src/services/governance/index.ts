@@ -7,6 +7,13 @@ export {
 } from './GovernanceSigningService';
 
 export {
+  CircuitTransportService,
+  type Circuit,
+  type TransportStatus,
+  type TransportType,
+} from './CircuitTransportService';
+
+export {
   SigningServer,
   type HealthResponse,
   type SignRequestBody,

@@ -16,6 +16,9 @@ import { EventEmitter } from 'events';
 import bs58 from 'bs58';
 import { getMlDsaVaultService, MlDsaVaultService, MlDsaSignature } from '@/services/vault';
 import { TrustLevel } from '@/types';
+import { CircuitTransportService, Circuit } from './CircuitTransportService';
+
+const EDGE_URL = 'https://edge.estream.dev';
 
 // ============================================================================
 // Types
@@ -70,6 +73,12 @@ export interface GovernanceMetadata {
   // Network
   networkId?: string;
   environment?: string;
+  
+  // Circuit (from edge-proxy)
+  circuitId?: string;
+  circuitType?: string;
+  requiredSignatures?: number;
+  currentSignatures?: number;
 }
 
 export interface SigningResult {
@@ -112,10 +121,15 @@ class GovernanceSigningServiceImpl extends EventEmitter {
   private mlDsaService: MlDsaVaultService | null = null;
   private expiryCheckerId: ReturnType<typeof setInterval> | null = null;
   
+  private circuitPollerId: ReturnType<typeof setInterval> | null = null;
+  private transportService: typeof CircuitTransportService;
+  
   private constructor() {
     super();
+    this.transportService = CircuitTransportService;
     this.initMlDsa();
     this.startExpiryChecker();
+    this.startCircuitStream();
   }
   
   static getInstance(): GovernanceSigningServiceImpl {
@@ -335,6 +349,12 @@ class GovernanceSigningServiceImpl extends EventEmitter {
       this.completedSignatures.delete(oldest);
     }
     
+    // If this is a circuit approval, submit to edge-proxy with full public key for verification
+    if (requestId.startsWith('cir-')) {
+      const publicKey = await this.mlDsaService!.getMlDsaPublicKey();
+      await this.submitCircuitApproval(requestId, signature.signature, signature.keyHash, publicKey);
+    }
+    
     // Emit signed event
     this.emit('signed', result);
     
@@ -380,10 +400,138 @@ class GovernanceSigningServiceImpl extends EventEmitter {
   }
   
   /**
+   * Start circuit stream using HTTP/3 (QUIC) primary with HTTP fallback
+   */
+  private startCircuitStream(): void {
+    const status = this.transportService.getStatus();
+    console.log(`[GovernanceService] Starting circuit stream via ${status.transport}`);
+    
+    this.transportService.startCircuitStream((circuits: Circuit[]) => {
+      this.handleCircuitUpdate(circuits);
+    });
+    
+    // Log transport status
+    this.transportService.on('transport_ready', (status) => {
+      console.log(`[GovernanceService] Transport ready: ${status.transport}, latency: ${status.latencyMs}ms`);
+    });
+  }
+  
+  /**
+   * Handle circuit updates from transport
+   */
+  private handleCircuitUpdate(circuits: Circuit[]): void {
+    console.log('[GovernanceService] Received', circuits.length, 'pending circuits via', 
+      this.transportService.isUsingH3() ? 'HTTP/3' : 'HTTP');
+    
+    // Remove circuits that are no longer pending
+    const circuitIds = new Set(circuits.map(c => c.id));
+    for (const [id] of this.pendingRequests) {
+      if (id.startsWith('cir-') && !circuitIds.has(id)) {
+        this.pendingRequests.delete(id);
+        console.log('[GovernanceService] Removed non-pending circuit:', id);
+      }
+    }
+    
+    // Add new circuits
+    for (const circuit of circuits) {
+      if (this.pendingRequests.has(circuit.id)) continue;
+      
+      const request: GovernanceRequest = {
+        id: circuit.id,
+        operation: this.circuitTypeToOperation(circuit.type),
+        description: circuit.description || `Circuit: ${circuit.type}`,
+        timestamp: new Date(circuit.createdAt).getTime(),
+        expiresAt: circuit.expiresAt 
+          ? new Date(circuit.expiresAt).getTime() 
+          : Date.now() + 24 * 60 * 60 * 1000,
+        payload: this.hexToBytes(circuit.id.replace('cir-', '')),
+        metadata: {
+          environment: circuit.environment,
+          circuitId: circuit.id,
+          circuitType: circuit.type,
+          requiredSignatures: circuit.requiredSignatures,
+          currentSignatures: circuit.signatures?.length || 0,
+        },
+      };
+      
+      console.log('[GovernanceService] Adding circuit request:', circuit.id);
+      this.addRequest(request);
+    }
+  }
+  
+  /**
+   * Get transport status (for UI display)
+   */
+  getTransportStatus(): { transport: string; latencyMs: number } {
+    const status = this.transportService.getStatus();
+    return {
+      transport: status.transport,
+      latencyMs: status.latencyMs,
+    };
+  }
+  
+  /**
+   * Map circuit type to governance operation
+   */
+  private circuitTypeToOperation(circuitType: string): GovernanceOperation {
+    if (circuitType.includes('vpc') || circuitType.includes('firewall')) {
+      return 'provision';
+    }
+    if (circuitType.includes('deploy') || circuitType.includes('node')) {
+      return 'provision';
+    }
+    if (circuitType.includes('cloudflare') || circuitType.includes('tunnel')) {
+      return 'provision';
+    }
+    return 'provision'; // Default for infrastructure circuits
+  }
+  
+  /**
+   * Submit circuit approval via HTTP/3 (QUIC) primary with HTTP fallback
+   */
+  private async submitCircuitApproval(
+    circuitId: string, 
+    signature: Uint8Array,
+    signerKeyHash: Uint8Array,
+    publicKey: Uint8Array
+  ): Promise<boolean> {
+    const approval = {
+      circuitId,
+      signature: bs58.encode(signature),
+      signerKeyHash: bs58.encode(signerKeyHash),
+      // Include full public key for Rust verification (ML-DSA-87 = 2592 bytes)
+      publicKey: bs58.encode(publicKey),
+      algorithm: 'ML-DSA-87',
+      timestamp: Date.now(),
+    };
+    
+    try {
+      const success = await this.transportService.submitApproval(approval);
+      
+      if (success) {
+        const status = this.transportService.getStatus();
+        console.log(`[GovernanceService] Circuit approved via ${status.transport}: ${circuitId} (${status.latencyMs}ms)`);
+        return true;
+      } else {
+        console.error(`[GovernanceService] Circuit approval failed: ${circuitId}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`[GovernanceService] Failed to submit circuit approval:`, error);
+      return false;
+    }
+  }
+  
+  /**
    * Format operation for display
    */
   formatOperation(request: GovernanceRequest): string {
-    const { operation, metadata } = request;
+    const { operation, metadata, description } = request;
+    
+    // For circuit requests, use the description directly
+    if (metadata.circuitId) {
+      return description || `Circuit: ${metadata.circuitType || 'unknown'}`;
+    }
     
     switch (operation) {
       case 'provision':
@@ -421,6 +569,7 @@ class GovernanceSigningServiceImpl extends EventEmitter {
       lattice_create: '🔗',
       node_approve: '✅',
       node_revoke: '❌',
+      device_register: '📱',
     };
     return icons[operation] || '📋';
   }
@@ -433,6 +582,10 @@ class GovernanceSigningServiceImpl extends EventEmitter {
       clearInterval(this.expiryCheckerId);
       this.expiryCheckerId = null;
     }
+    if (this.circuitPollerId) {
+      clearInterval(this.circuitPollerId);
+      this.circuitPollerId = null;
+    }
     this.stopListening();
     this.pendingRequests.clear();
     this.completedSignatures.clear();
@@ -444,6 +597,14 @@ class GovernanceSigningServiceImpl extends EventEmitter {
     return Array.from(bytes)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
+  }
+  
+  private hexToBytes(hex: string): Uint8Array {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return bytes;
   }
 }
 

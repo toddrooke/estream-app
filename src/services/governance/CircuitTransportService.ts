@@ -25,7 +25,8 @@ export type TransportType = 'h3' | 'h2' | 'h1' | 'unknown';
 
 export interface Circuit {
   id: string;
-  type: string;
+  type?: string;
+  circuitType?: string; // Edge-proxy uses circuitType, not type
   description: string;
   status: string;
   environment?: string;
@@ -69,24 +70,13 @@ class CircuitTransportServiceImpl extends EventEmitter {
   }
   
   /**
-   * Initialize transport - try HTTP/3 first
+   * Initialize transport - skip HTTP/3 for now, use reliable HTTP/1.1
    */
   private async initTransport(): Promise<void> {
-    if (QUIC_AVAILABLE) {
-      try {
-        console.log('[CircuitTransport] Attempting HTTP/3 connection...');
-        await NativeQuicClient.h3Connect(EDGE_H3_URL);
-        this.h3Connected = true;
-        this.currentTransport = 'h3';
-        console.log('[CircuitTransport] HTTP/3 connected successfully');
-      } catch (error) {
-        console.log('[CircuitTransport] HTTP/3 failed, falling back to HTTP:', error);
-        this.currentTransport = 'h1';
-      }
-    } else {
-      console.log('[CircuitTransport] QUIC not available, using HTTP fallback');
-      this.currentTransport = 'h1';
-    }
+    // HTTP/3 (QUIC) native module not yet implemented - use HTTP fallback
+    console.log('[CircuitTransport] Using HTTP/1.1 transport (QUIC module not available)');
+    this.currentTransport = 'h1';
+    this.h3Connected = false;
     
     this.emit('transport_ready', this.getStatus());
   }
@@ -107,18 +97,22 @@ class CircuitTransportServiceImpl extends EventEmitter {
    */
   async fetchPendingCircuits(): Promise<Circuit[]> {
     const startTime = Date.now();
+    console.log(`[CircuitTransport] fetchPendingCircuits: h3Connected=${this.h3Connected}, QUIC_AVAILABLE=${QUIC_AVAILABLE}`);
     
     try {
       let data: { circuits: Circuit[] };
       
       if (this.h3Connected && QUIC_AVAILABLE) {
         // Use HTTP/3
+        console.log('[CircuitTransport] Using HTTP/3...');
         const result = await NativeQuicClient.h3Get('/api/circuits?status=pending');
         data = JSON.parse(result.body || result);
         this.currentTransport = 'h3';
       } else {
         // Fallback to HTTP
+        console.log('[CircuitTransport] Using HTTP fallback...');
         const response = await fetch(`${EDGE_URL}/api/circuits?status=pending`);
+        console.log(`[CircuitTransport] HTTP response status: ${response.status}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -127,6 +121,7 @@ class CircuitTransportServiceImpl extends EventEmitter {
       }
       
       this.lastLatency = Date.now() - startTime;
+      console.log(`[CircuitTransport] Fetched ${data.circuits?.length || 0} circuits in ${this.lastLatency}ms`);
       return data.circuits || [];
       
     } catch (error) {
@@ -202,20 +197,26 @@ class CircuitTransportServiceImpl extends EventEmitter {
     const poll = async () => {
       if (!this.streamActive) return;
       
+      console.log('[CircuitTransport] Polling for circuits...');
       try {
         const circuits = await this.fetchPendingCircuits();
+        console.log(`[CircuitTransport] Poll returned ${circuits.length} circuits`);
         onCircuits(circuits);
       } catch (error) {
-        console.warn('[CircuitTransport] Poll failed:', error);
+        console.error('[CircuitTransport] Poll failed:', error);
       }
     };
     
-    // Initial fetch
-    poll();
-    
-    // Poll interval - shorter for H3, longer for HTTP
-    const interval = this.h3Connected ? 2000 : 5000;
-    this.pollIntervalId = setInterval(poll, interval);
+    // Initial fetch after a short delay to let transport init complete
+    setTimeout(() => {
+      console.log('[CircuitTransport] Starting initial poll...');
+      poll();
+      
+      // Poll interval - shorter for H3, longer for HTTP
+      const interval = this.h3Connected ? 2000 : 5000;
+      console.log(`[CircuitTransport] Setting poll interval: ${interval}ms`);
+      this.pollIntervalId = setInterval(poll, interval);
+    }, 500);
   }
   
   /**

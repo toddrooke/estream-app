@@ -202,8 +202,9 @@ class GovernanceSigningServiceImpl extends EventEmitter {
     this.connectionStatus = 'connecting';
     this.emit('connection', false);
     
-    // In production, this would start a local HTTP server using a native module
-    // For now, we simulate listening and allow manual request addition
+    // Start the circuit polling to fetch pending circuits from edge-proxy
+    this.startCircuitStream();
+    
     console.log(`[GovernanceService] Listening for requests on port ${this.serverPort}`);
     
     this.isListening = true;
@@ -400,21 +401,47 @@ class GovernanceSigningServiceImpl extends EventEmitter {
   }
   
   /**
-   * Start circuit stream using HTTP/3 (QUIC) primary with HTTP fallback
+   * Start circuit stream using direct HTTP polling (simplified for reliability)
    */
   private startCircuitStream(): void {
-    const status = this.transportService.getStatus();
-    console.log(`[GovernanceService] Starting circuit stream via ${status.transport}`);
+    console.log('[GovernanceService] startCircuitStream called, interval=', this.circuitPollInterval);
+    if (this.circuitPollInterval) {
+      console.log('[GovernanceService] Circuit poller already running, skipping');
+      return;
+    }
     
-    this.transportService.startCircuitStream((circuits: Circuit[]) => {
-      this.handleCircuitUpdate(circuits);
-    });
+    console.log('[GovernanceService] Starting circuit poller v2...');
     
-    // Log transport status
-    this.transportService.on('transport_ready', (status) => {
-      console.log(`[GovernanceService] Transport ready: ${status.transport}, latency: ${status.latencyMs}ms`);
-    });
+    const poll = async () => {
+      console.log('[GovernanceService] Poll starting...');
+      try {
+        const response = await fetch('https://edge.estream.dev/api/circuits?status=pending');
+        console.log('[GovernanceService] Fetch status:', response.status);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const circuits = data.circuits || [];
+        console.log('[GovernanceService] Found', circuits.length, 'pending circuits');
+        
+        this.handleCircuitUpdate(circuits);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('[GovernanceService] Circuit poll failed:', errorMessage);
+      }
+    };
+    
+    // Initial fetch immediately
+    poll();
+    
+    // Poll every 5 seconds
+    this.circuitPollInterval = setInterval(poll, 5000);
+    console.log('[GovernanceService] Circuit poller started');
   }
+  
+  private circuitPollInterval: ReturnType<typeof setInterval> | null = null;
   
   /**
    * Handle circuit updates from transport
@@ -436,10 +463,15 @@ class GovernanceSigningServiceImpl extends EventEmitter {
     for (const circuit of circuits) {
       if (this.pendingRequests.has(circuit.id)) continue;
       
+      // Edge-proxy returns circuitType, not type
+      console.log('[GovernanceService] Processing circuit:', JSON.stringify(circuit));
+      const circuitType = circuit.circuitType || circuit.type || 'unknown';
+      console.log('[GovernanceService] CircuitType resolved:', circuitType);
+      
       const request: GovernanceRequest = {
         id: circuit.id,
-        operation: this.circuitTypeToOperation(circuit.type),
-        description: circuit.description || `Circuit: ${circuit.type}`,
+        operation: this.circuitTypeToOperation(circuitType),
+        description: circuit.description || `Circuit: ${circuitType}`,
         timestamp: new Date(circuit.createdAt).getTime(),
         expiresAt: circuit.expiresAt 
           ? new Date(circuit.expiresAt).getTime() 
@@ -448,7 +480,7 @@ class GovernanceSigningServiceImpl extends EventEmitter {
         metadata: {
           environment: circuit.environment,
           circuitId: circuit.id,
-          circuitType: circuit.type,
+          circuitType: circuitType,
           requiredSignatures: circuit.requiredSignatures,
           currentSignatures: circuit.signatures?.length || 0,
         },
@@ -473,7 +505,10 @@ class GovernanceSigningServiceImpl extends EventEmitter {
   /**
    * Map circuit type to governance operation
    */
-  private circuitTypeToOperation(circuitType: string): GovernanceOperation {
+  private circuitTypeToOperation(circuitType: string | undefined): GovernanceOperation {
+    if (!circuitType) {
+      return 'provision'; // Default for unknown types
+    }
     if (circuitType.includes('vpc') || circuitType.includes('firewall')) {
       return 'provision';
     }

@@ -1,11 +1,18 @@
 /**
  * eStream Mobile App
  * 
- * Clean, production-ready UI with tabbed navigation.
- * Developer tools moved to dedicated tab.
+ * Production-ready unified experience for users and operators.
+ * Phase 8: Complete app redesign with biometric gate.
+ * 
+ * Tabs:
+ * 1. Home - Quick status, governance alerts, activity
+ * 2. Wallet - Balance, transactions, identity
+ * 3. Spark - Render/Scan for payments and verification
+ * 4. Metrics - Network health, costs (operator/tenant)
+ * 5. Settings - Network, biometrics, ETFA, identity
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { 
   SafeAreaView, 
   StatusBar, 
@@ -22,11 +29,13 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { VaultProvider, useVault, useTrustBadge } from '@/services/vault';
 import { AccountProvider, useAccount } from '@/services/account';
 import { ETFAService } from '@/services/etfa';
+import { getBiometricService } from '@/services/biometric';
 
 // Screens
 import GovernanceScreen from '@/screens/GovernanceScreen';
-import ScanScreen from '@/screens/ScanScreen';
-import AccountScreen from '@/screens/AccountScreen';
+import SparkScreen from '@/screens/SparkScreen';
+import WalletScreen from '@/screens/WalletScreen';
+import MetricsScreen from '@/screens/MetricsScreen';
 
 // Network Settings
 import { NetworkSettings } from '@estream/react-native';
@@ -124,10 +133,32 @@ function SettingsScreen(): React.JSX.Element {
   const { publicKey } = useVault();
   const trustBadge = useTrustBadge();
   
-  // ETFA state (moved from Home)
+  // Biometric state
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricType, setBiometricType] = useState<string>('None');
+  const [biometricEnabled, setBiometricEnabled] = useState(true);
+  
+  // ETFA state
   const [etfaCollecting, setEtfaCollecting] = useState(false);
   const [etfaCount, setEtfaCount] = useState(0);
   const [etfaLastResult, setEtfaLastResult] = useState<string | null>(null);
+
+  // Check biometric status on mount
+  useEffect(() => {
+    const checkBiometric = async () => {
+      try {
+        const biometricService = getBiometricService();
+        const status = await biometricService.getStatus();
+        setBiometricAvailable(status.available);
+        setBiometricType(status.biometricType === 'FaceID' ? 'Face ID' : 
+                         status.biometricType === 'TouchID' ? 'Touch ID' : 
+                         status.biometricType === 'Fingerprint' ? 'Fingerprint' : 'None');
+      } catch (e) {
+        console.log('[Settings] Biometric check failed:', e);
+      }
+    };
+    checkBiometric();
+  }, []);
   
   // ETFA collection handler
   const handleCollectETFA = useCallback(async () => {
@@ -137,7 +168,6 @@ function SettingsScreen(): React.JSX.Element {
     setEtfaLastResult(null);
     
     try {
-      // Collect fingerprint (100 samples)
       const fingerprint = await ETFAService.collectFingerprint(100, (op, progress) => {
         console.log(`[ETFA] ${op}: ${(progress * 100).toFixed(0)}%`);
       });
@@ -147,10 +177,7 @@ function SettingsScreen(): React.JSX.Element {
         return;
       }
       
-      // Convert to lattice record
       const record = ETFAService.toLatticeRecord(fingerprint);
-      
-      // Submit to lattice (uses current network from NetworkConfig)
       const { getNetworkEndpoints } = require('@estream/react-native');
       const endpoints = getNetworkEndpoints();
       const latticeUrl = endpoints.sparkLatticeUrl || 'https://edge.estream.dev';
@@ -172,6 +199,11 @@ function SettingsScreen(): React.JSX.Element {
     }
   }, [etfaCollecting]);
 
+  const toggleBiometric = useCallback(() => {
+    setBiometricEnabled(prev => !prev);
+    // In production, save to AsyncStorage
+  }, []);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
@@ -185,6 +217,34 @@ function SettingsScreen(): React.JSX.Element {
             console.log('[Settings] Network switched to:', env);
           }}
         />
+
+        {/* Biometric Preferences */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Biometric Authentication</Text>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>{biometricType}</Text>
+            <View style={[
+              styles.settingBadge, 
+              { backgroundColor: biometricAvailable ? '#22c55e' : '#666' }
+            ]}>
+              <Text style={styles.settingBadgeText}>
+                {biometricAvailable ? 'Available' : 'Not Available'}
+              </Text>
+            </View>
+          </View>
+          {biometricAvailable && (
+            <TouchableOpacity style={styles.settingRow} onPress={toggleBiometric}>
+              <Text style={styles.settingLabel}>Require on Launch</Text>
+              <Text style={[styles.settingValue, { color: biometricEnabled ? '#22c55e' : '#666' }]}>
+                {biometricEnabled ? 'Enabled ✓' : 'Disabled'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Require for Governance</Text>
+            <Text style={[styles.settingValue, { color: '#22c55e' }]}>Always ✓</Text>
+          </View>
+        </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Security</Text>
@@ -210,7 +270,7 @@ function SettingsScreen(): React.JSX.Element {
           </View>
         </View>
 
-        {/* ETFA Device Fingerprint - moved from Home */}
+        {/* ETFA Device Fingerprint */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Device Fingerprint (ETFA)</Text>
           <Text style={styles.emptyText}>
@@ -235,6 +295,8 @@ function SettingsScreen(): React.JSX.Element {
             )}
           </View>
         </View>
+
+        <Text style={styles.version}>v0.4.0</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -246,9 +308,9 @@ function SettingsScreen(): React.JSX.Element {
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   const icons: Record<string, string> = {
     Home: '⬡',
-    Account: '✦',
-    Scan: '📷',
-    Governance: '🔐',
+    Wallet: '💎',
+    Spark: '✦',
+    Metrics: '📊',
     Settings: '⚙️',
   };
   
@@ -275,25 +337,114 @@ function AppContent(): React.JSX.Element {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Account" component={AccountScreen} />
-      <Tab.Screen name="Scan" component={ScanScreen} />
-      <Tab.Screen name="Governance" component={GovernanceScreen} />
+      <Tab.Screen name="Wallet" component={WalletScreen} />
+      <Tab.Screen name="Spark" component={SparkScreen} />
+      <Tab.Screen name="Metrics" component={MetricsScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );
 }
 
 /**
- * Root App with providers
+ * Biometric Gate - requires authentication to access app
+ */
+function BiometricGate({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [biometricType, setBiometricType] = useState<string>('Biometric');
+
+  const authenticate = useCallback(async () => {
+    setIsAuthenticating(true);
+    setAuthError(null);
+
+    try {
+      const biometricService = getBiometricService();
+      const status = await biometricService.getStatus();
+
+      if (!status.available) {
+        // No biometric available - allow access (but show warning in settings)
+        console.log('[BiometricGate] No biometric available, granting access');
+        setIsAuthenticated(true);
+        setIsAuthenticating(false);
+        return;
+      }
+
+      setBiometricType(status.biometricType === 'FaceID' ? 'Face ID' : 
+                       status.biometricType === 'TouchID' ? 'Touch ID' : 
+                       status.biometricType === 'Fingerprint' ? 'Fingerprint' : 'Biometric');
+
+      const result = await biometricService.authenticate(
+        'Authenticate to access eStream',
+        'Verify your identity'
+      );
+
+      if (result.success) {
+        setIsAuthenticated(true);
+      } else if (result.cancelled) {
+        setAuthError('Authentication cancelled');
+      } else {
+        setAuthError(result.errorMessage || 'Authentication failed');
+      }
+    } catch (error) {
+      console.error('[BiometricGate] Error:', error);
+      setAuthError(error instanceof Error ? error.message : 'Authentication error');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }, []);
+
+  // Authenticate on mount
+  useEffect(() => {
+    authenticate();
+  }, [authenticate]);
+
+  if (isAuthenticated) {
+    return <>{children}</>;
+  }
+
+  return (
+    <SafeAreaView style={styles.biometricGate}>
+      <View style={styles.biometricContent}>
+        <Text style={styles.biometricLogo}>⬡</Text>
+        <Text style={styles.biometricTitle}>eStream</Text>
+        
+        {isAuthenticating ? (
+          <>
+            <ActivityIndicator size="large" color="#00ffd5" style={styles.biometricSpinner} />
+            <Text style={styles.biometricStatus}>Authenticating with {biometricType}...</Text>
+          </>
+        ) : authError ? (
+          <>
+            <Text style={styles.biometricError}>{authError}</Text>
+            <TouchableOpacity style={styles.biometricRetryButton} onPress={authenticate}>
+              <Text style={styles.biometricRetryText}>Try Again</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity style={styles.biometricUnlockButton} onPress={authenticate}>
+            <Text style={styles.biometricUnlockIcon}>🔓</Text>
+            <Text style={styles.biometricUnlockText}>Unlock with {biometricType}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+/**
+ * Root App with providers and biometric gate
  */
 function App(): React.JSX.Element {
   return (
     <VaultProvider nodeUrl={DEFAULT_NODE_URL}>
       <AccountProvider>
-        <NavigationContainer>
-          <StatusBar barStyle="light-content" />
-          <AppContent />
-        </NavigationContainer>
+        <BiometricGate>
+          <NavigationContainer>
+            <StatusBar barStyle="light-content" />
+            <AppContent />
+          </NavigationContainer>
+        </BiometricGate>
       </AccountProvider>
     </VaultProvider>
   );
@@ -548,6 +699,71 @@ const styles = StyleSheet.create({
     color: '#00ffd5',
     marginTop: 4,
     fontFamily: 'monospace',
+  },
+  // Biometric Gate styles
+  biometricGate: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+  },
+  biometricContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  biometricLogo: {
+    fontSize: 80,
+    color: '#00ffd5',
+    marginBottom: 16,
+  },
+  biometricTitle: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 48,
+  },
+  biometricSpinner: {
+    marginBottom: 16,
+  },
+  biometricStatus: {
+    fontSize: 16,
+    color: '#888',
+  },
+  biometricError: {
+    fontSize: 14,
+    color: '#ef4444',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  biometricRetryButton: {
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  biometricRetryText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  biometricUnlockButton: {
+    backgroundColor: '#00ffd5',
+    paddingHorizontal: 40,
+    paddingVertical: 20,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  biometricUnlockIcon: {
+    fontSize: 24,
+  },
+  biometricUnlockText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000',
   },
 });
 

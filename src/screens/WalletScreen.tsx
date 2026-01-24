@@ -211,6 +211,20 @@ export default function WalletScreen(): React.JSX.Element {
     );
   }, []);
 
+  const handleInvite = useCallback(() => {
+    // Navigate to Invite screen
+    // For now, use Alert until we wire up navigation
+    Alert.alert(
+      'Create Invite',
+      'Create a shareable link to invite friends or request payments.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Friend Invite', onPress: () => console.log('[Wallet] Friend invite') },
+        { text: 'Payment Request', onPress: () => console.log('[Wallet] Payment request') },
+      ]
+    );
+  }, []);
+
   if (accountLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -266,6 +280,10 @@ export default function WalletScreen(): React.JSX.Element {
             <TouchableOpacity style={styles.actionButton} onPress={handleReceive}>
               <Text style={styles.actionIcon}>↓</Text>
               <Text style={styles.actionText}>Receive</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={handleInvite}>
+              <Text style={styles.actionIcon}>🔗</Text>
+              <Text style={styles.actionText}>Invite</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.actionButton, styles.depositButton]} onPress={handleDeposit}>
               <Text style={styles.actionIcon}>+</Text>

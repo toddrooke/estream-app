@@ -37,6 +37,11 @@ import SparkScreen from '@/screens/SparkScreen';
 import WalletScreen from '@/screens/WalletScreen';
 import MetricsScreen from '@/screens/MetricsScreen';
 
+// Ephemeral Links
+import { useEphemeralLinkHandler } from '@/hooks/useEphemeralLinkHandler';
+import { InviteReceivedModal } from '@/components/InviteReceivedModal';
+import { PaymentRequestModal } from '@/components/PaymentRequestModal';
+
 // Network Settings
 import { NetworkSettings } from '@estream/react-native';
 
@@ -325,23 +330,76 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
  * Main App with Navigation
  */
 function AppContent(): React.JSX.Element {
+  // Handle incoming ephemeral links
+  const { isLoading, payload, error, clear } = useEphemeralLinkHandler();
+  
+  // Handle accepting an invite
+  const handleAcceptInvite = useCallback(() => {
+    if (!payload) return;
+    
+    if (payload.type === 'friend-invite') {
+      // TODO: Add contact to local storage
+      Alert.alert('Contact Added', `${payload.senderName || 'User'} has been added to your contacts.`);
+    } else if (payload.type === 'org-invite') {
+      // TODO: Accept org invite
+      Alert.alert('Joined', `You have joined ${payload.orgName || 'the organization'}.`);
+    }
+    
+    clear();
+  }, [payload, clear]);
+
+  // Handle declining an invite
+  const handleDeclineInvite = useCallback(() => {
+    clear();
+  }, [clear]);
+
+  // Handle completing a payment
+  const handlePaymentComplete = useCallback(() => {
+    clear();
+  }, [clear]);
+
+  // Determine which modal to show
+  const showInviteModal = !!(payload && (payload.type === 'friend-invite' || payload.type === 'org-invite'));
+  const showPaymentModal = !!(payload && payload.type === 'payment-request');
+
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: '#00ffd5',
-        tabBarInactiveTintColor: '#666',
-        tabBarIcon: ({ focused }) => <TabIcon name={route.name} focused={focused} />,
-        tabBarLabelStyle: styles.tabLabel,
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Wallet" component={WalletScreen} />
-      <Tab.Screen name="Spark" component={SparkScreen} />
-      <Tab.Screen name="Metrics" component={MetricsScreen} />
-      <Tab.Screen name="Settings" component={SettingsScreen} />
-    </Tab.Navigator>
+    <>
+      <Tab.Navigator
+        screenOptions={({ route }) => ({
+          headerShown: false,
+          tabBarStyle: styles.tabBar,
+          tabBarActiveTintColor: '#00ffd5',
+          tabBarInactiveTintColor: '#666',
+          tabBarIcon: ({ focused }) => <TabIcon name={route.name} focused={focused} />,
+          tabBarLabelStyle: styles.tabLabel,
+        })}
+      >
+        <Tab.Screen name="Home" component={HomeScreen} />
+        <Tab.Screen name="Wallet" component={WalletScreen} />
+        <Tab.Screen name="Spark" component={SparkScreen} />
+        <Tab.Screen name="Metrics" component={MetricsScreen} />
+        <Tab.Screen name="Settings" component={SettingsScreen} />
+      </Tab.Navigator>
+
+      {/* Ephemeral Link Modals */}
+      <InviteReceivedModal
+        visible={showInviteModal || isLoading || !!error}
+        payload={payload}
+        isLoading={isLoading}
+        error={error}
+        onAccept={handleAcceptInvite}
+        onDecline={handleDeclineInvite}
+      />
+
+      <PaymentRequestModal
+        visible={showPaymentModal}
+        payload={payload}
+        isLoading={false}
+        error={null}
+        onComplete={handlePaymentComplete}
+        onCancel={handleDeclineInvite}
+      />
+    </>
   );
 }
 

@@ -44,6 +44,25 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
+        
+        <!-- App Links for Ephemeral Links (link.estream.dev) -->
+        <intent-filter android:autoVerify="true">
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data 
+                android:scheme="https"
+                android:host="link.estream.dev"
+                android:pathPrefix="/e/" />
+        </intent-filter>
+        
+        <!-- Deep links for estream:// scheme (fallback) -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="estream" />
+        </intent-filter>
       </activity>
     </application>
 </manifest>

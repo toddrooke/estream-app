@@ -57,11 +57,36 @@ interface RequestCardProps {
 }
 
 function RequestCard({ request, onSign, onReject, isSigning }: RequestCardProps) {
-  const icon = GovernanceSigningService.getOperationIcon(request.operation);
-  const formatted = GovernanceSigningService.formatOperation(request);
+  const isCircuit = !!request.metadata?.circuitId;
+  const circuitType = request.metadata?.circuitType as string | undefined;
+  
+  // Get icon based on circuit type
+  const getCircuitIcon = (type: string | undefined): string => {
+    if (!type) return '📋';
+    if (type.includes('vpc')) return '🌐';
+    if (type.includes('firewall')) return '🔥';
+    if (type.includes('sa') || type.includes('account')) return '👤';
+    if (type.includes('ip')) return '📍';
+    if (type.includes('deploy') || type.includes('node')) return '🖥️';
+    if (type.includes('tunnel') || type.includes('cloudflare')) return '🚇';
+    return '⚙️';
+  };
+  
+  const icon = isCircuit ? getCircuitIcon(circuitType) : GovernanceSigningService.getOperationIcon(request.operation);
   const timeRemaining = Math.max(0, request.expiresAt - Date.now());
   const minutes = Math.floor(timeRemaining / 60000);
   const seconds = Math.floor((timeRemaining % 60000) / 1000);
+  
+  // Format circuit type for display
+  const formatCircuitType = (type: string | undefined): string => {
+    if (!type) return 'CIRCUIT';
+    // estream.ops.create.vpc.v1 -> VPC
+    const parts = type.split('.');
+    if (parts.length >= 4) {
+      return parts[3].toUpperCase();
+    }
+    return type.toUpperCase();
+  };
   
   return (
     <View style={styles.requestCard}>
@@ -69,18 +94,44 @@ function RequestCard({ request, onSign, onReject, isSigning }: RequestCardProps)
       <View style={styles.requestHeader}>
         <Text style={styles.requestIcon}>{icon}</Text>
         <View style={styles.requestTitleContainer}>
-          <Text style={styles.requestOperation}>{request.operation.toUpperCase()}</Text>
+          <Text style={styles.requestOperation}>
+            {isCircuit ? formatCircuitType(circuitType) : request.operation.toUpperCase()}
+          </Text>
           <Text style={styles.requestExpiry}>
             Expires in {minutes}:{seconds.toString().padStart(2, '0')}
           </Text>
         </View>
       </View>
       
-      {/* Description */}
-      <Text style={styles.requestDescription}>{formatted}</Text>
+      {/* Description - prominently displayed */}
+      <Text style={styles.requestDescription}>
+        {request.description || 'No description'}
+      </Text>
       
-      {/* Metadata */}
-      {request.metadata && Object.keys(request.metadata).length > 0 && (
+      {/* Circuit-specific metadata */}
+      {isCircuit && (
+        <View style={styles.metadataContainer}>
+          <View style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Circuit:</Text>
+            <Text style={styles.metadataValue}>{request.metadata?.circuitId}</Text>
+          </View>
+          {request.metadata?.environment && (
+            <View style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Environment:</Text>
+              <Text style={styles.metadataValue}>{request.metadata.environment}</Text>
+            </View>
+          )}
+          <View style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Signatures:</Text>
+            <Text style={styles.metadataValue}>
+              {request.metadata?.currentSignatures || 0} / {request.metadata?.requiredSignatures || 1}
+            </Text>
+          </View>
+        </View>
+      )}
+      
+      {/* Legacy metadata for non-circuit requests */}
+      {!isCircuit && request.metadata && Object.keys(request.metadata).length > 0 && (
         <View style={styles.metadataContainer}>
           {request.metadata.estimatedCost && (
             <View style={styles.metadataRow}>
@@ -185,6 +236,13 @@ export default function GovernanceScreen(): React.JSX.Element {
     loadState();
     startListening();
     
+    // Poll for pending requests every 2 seconds
+    const pollInterval = setInterval(() => {
+      const requests = GovernanceSigningService.getPendingRequests();
+      console.log('[GovernanceScreen] Polling, found', requests.length, 'requests');
+      setPendingRequests(requests);
+    }, 2000);
+    
     // Start the SigningServer for CLI communication
     console.log('[GovernanceScreen] About to call SigningServer.start()...');
     SigningServer.start().then((started) => {
@@ -210,6 +268,7 @@ export default function GovernanceScreen(): React.JSX.Element {
     GovernanceSigningService.on('expired', handleExpired);
     
     return () => {
+      clearInterval(pollInterval);
       GovernanceSigningService.off('request', handleRequest);
       GovernanceSigningService.off('signed', handleSigned);
       GovernanceSigningService.off('rejected', handleRejected);

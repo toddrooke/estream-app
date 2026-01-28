@@ -6,6 +6,7 @@
  */
 
 import { NativeModules, Platform } from 'react-native';
+import { networkConfig } from '@estream/react-native';
 
 // Native module interface
 interface EstreamClientModule {
@@ -101,10 +102,8 @@ export interface SparkResult {
   error_message?: string;
 }
 
-// Default console URL
-const DEFAULT_CONSOLE_URL = __DEV__ 
-  ? 'http://localhost:8787'
-  : 'https://console.estream.dev';
+// Get console URL from network config (changes based on selected environment)
+const getDefaultConsoleUrl = () => networkConfig.getEndpoints().consoleUrl;
 
 /**
  * eStream Client Service
@@ -115,7 +114,7 @@ export class EstreamClientService {
   private consoleUrl: string;
 
   constructor(consoleUrl?: string) {
-    this.consoleUrl = consoleUrl || DEFAULT_CONSOLE_URL;
+    this.consoleUrl = consoleUrl || getDefaultConsoleUrl();
   }
 
   /**

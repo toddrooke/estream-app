@@ -30,12 +30,12 @@ import ScanScreen from '@/screens/ScanScreen';
 import AccountScreen from '@/screens/AccountScreen';
 
 // Network Settings
-import { NetworkSettings } from '@estream/react-native';
+import { NetworkSettings, networkConfig } from '@estream/react-native';
 
 const Tab = createBottomTabNavigator();
 
-// Default node URL
-const DEFAULT_NODE_URL = 'http://localhost:8080';
+// Get API endpoint from network config (changes based on selected environment)
+const getApiEndpoint = () => networkConfig.getEndpoints().apiEndpoint;
 
 /**
  * Home Screen - Clean status overview
@@ -70,10 +70,10 @@ function HomeScreen(): React.JSX.Element {
       // Convert to lattice record
       const record = ETFAService.toLatticeRecord(fingerprint);
       
-      // Submit to lattice (alpha-devnet edge proxy)
+      // Submit to lattice using configured API endpoint
       const success = await ETFAService.submitToLattice(
         record,
-        'https://edge.estream.dev'
+        networkConfig.getEndpoints().apiEndpoint
       );
       
       if (success) {

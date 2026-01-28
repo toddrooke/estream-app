@@ -9,8 +9,10 @@ import { VaultService } from '@/services/vault/VaultService';
 import { SignedEnvelopeHeaders } from '@/types';
 import { sha256 } from '@/utils/crypto';
 import bs58 from 'bs58';
+import { networkConfig } from '@estream/react-native';
 
-const DEFAULT_NODE_URL = 'http://localhost:8080';
+// Get API endpoint from network config (changes based on selected environment)
+const getDefaultNodeUrl = () => networkConfig.getEndpoints().apiEndpoint;
 
 /**
  * Generate a cryptographically random nonce.
@@ -101,8 +103,9 @@ export async function signedFetch(
   method: string,
   path: string,
   body?: unknown,
-  nodeUrl: string = DEFAULT_NODE_URL
+  nodeUrl?: string
 ): Promise<Response> {
+  const url = nodeUrl ?? getDefaultNodeUrl();
   const headers = await signRequestEnvelope(vault, method, path, body);
   
   const init: RequestInit = {
@@ -117,18 +120,19 @@ export async function signedFetch(
     init.body = JSON.stringify(body);
   }
   
-  return fetch(`${nodeUrl}${path}`, init);
+  return fetch(`${url}${path}`, init);
 }
 
 /**
  * Create a signed API client bound to a vault and node.
  */
-export function createSignedClient(vault: VaultService, nodeUrl: string = DEFAULT_NODE_URL) {
+export function createSignedClient(vault: VaultService, nodeUrl?: string) {
+  const url = nodeUrl ?? getDefaultNodeUrl();
   return {
-    get: (path: string) => signedFetch(vault, 'GET', path, undefined, nodeUrl),
-    post: (path: string, body: unknown) => signedFetch(vault, 'POST', path, body, nodeUrl),
-    put: (path: string, body: unknown) => signedFetch(vault, 'PUT', path, body, nodeUrl),
-    delete: (path: string) => signedFetch(vault, 'DELETE', path, undefined, nodeUrl),
+    get: (path: string) => signedFetch(vault, 'GET', path, undefined, url),
+    post: (path: string, body: unknown) => signedFetch(vault, 'POST', path, body, url),
+    put: (path: string, body: unknown) => signedFetch(vault, 'PUT', path, body, url),
+    delete: (path: string) => signedFetch(vault, 'DELETE', path, undefined, url),
   };
 }
 

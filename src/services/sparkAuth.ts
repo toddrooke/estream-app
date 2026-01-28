@@ -335,32 +335,30 @@ export async function submitSparkAuth(
       walletId: walletId.slice(0, 16) + '...',
     });
 
-    // Emit to lattice via WebSocket or HTTP POST to lattice endpoint
+    // Emit to lattice
     let verified = false;
     let sessionToken: string | undefined;
     
     try {
-      // POST to lattice endpoint with the SparkAuthResponse event
-      // The lattice URL format is: wss://host/lattice or https://host/lattice
-      // Convert to HTTP POST endpoint for emit
-      const emitUrl = latticeUrl.replace(/^wss?:/, 'https:').replace(/^ws:/, 'http:');
+      // POST to /lattice endpoint
+      const baseUrl = latticeUrl.replace(/\/lattice$/, '');
+      const emitUrl = `${baseUrl}/lattice`;
       
-      console.log('[SparkAuth] Emitting to:', emitUrl);
+      console.log('[SparkAuth] Emitting to lattice:', emitUrl);
       
       const emitResponse = await fetch(emitUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          path: `spark/auth/${challenge.sessionId}`,
+          path: `/spark/auth/${challenge.sessionId}`,
           payload: authResponse,
         }),
       });
       
       if (emitResponse.ok) {
-        const result = await emitResponse.json() as { success?: boolean; verified?: boolean; sessionToken?: string };
-        console.log('[SparkAuth] Lattice emit response:', result);
-        verified = result.success || result.verified || true; // Assume success if 200 OK
-        sessionToken = result.sessionToken;
+        const result = await emitResponse.json() as { success?: boolean };
+        console.log('[SparkAuth] Lattice emit success:', result);
+        verified = result.success || false;
       } else {
         const errorText = await emitResponse.text().catch(() => 'unknown');
         console.warn('[SparkAuth] Lattice emit failed:', emitResponse.status, errorText);

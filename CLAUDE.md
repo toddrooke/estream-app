@@ -322,6 +322,48 @@ npm run lint
 
 ---
 
+## StreamSight Integration (REQUIRED)
+
+**ALL app code MUST integrate with StreamSight** - eStream's native observability framework.
+
+StreamSight provides unified telemetry, error tracking, and health monitoring using native Lex primitives. This enables dynamic debug levels, structured errors, and centralized monitoring.
+
+**App Developer Integration:**
+
+```typescript
+// ✅ REQUIRED: Initialize StreamSight in your app
+import { StreamSight, TraceLevel } from '@estream/sdk';
+
+const streamsight = new StreamSight({
+  appId: 'my-app',
+  defaultLevel: TraceLevel.Info,
+});
+
+// Emit telemetry events
+streamsight.span('user-action', { action: 'login', latency_ms: 42 });
+
+// Emit errors (automatically cataloged)
+streamsight.error('E4001', { context: 'bridge verification failed' });
+
+// Dynamic log level control (operators can change remotely)
+streamsight.setLevel(TraceLevel.Verbose);  // Or controlled via /dev/config
+```
+
+**Lex Paths for Apps:**
+- `lex://estream/apps/{app_id}/telemetry` - App telemetry events
+- `lex://estream/apps/{app_id}/errors` - App errors
+- `lex://estream/dev/debug/{app_id}/*` - Debug streams
+- `lex://estream/dev/config/{device_id}` - Per-device config (log levels)
+
+**Never Do:**
+- Use `console.log` for production telemetry
+- Skip error emission on failures
+- Hardcode log levels instead of using StreamSight dynamic control
+
+> **See**: `estream-io/specs/ESCIR_v0.8.0_OVERVIEW.md` and `estream-io/docs/apps/STREAMSIGHT_SDK.md` for complete documentation.
+
+---
+
 ## Security Considerations
 
 > **See**: [estream Security Patterns Guide](../estream/docs/guides/SECURITY_PATTERNS.md) for authoritative patterns.

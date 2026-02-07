@@ -35,6 +35,7 @@ import {
   ScanStatus,
 } from '@/services/nativeSparkScanner';
 import { authenticateWithSpark, SparkAuthChallenge, SparkAuthChallengeRaw, SparkAuthResult, normalizeChallenge } from '@/services/sparkAuth';
+import { networkConfig } from '@estream/react-native';
 
 // ============================================================================
 // Camera Import (conditional - avoid conditional hook calls)
@@ -236,14 +237,13 @@ function CameraView({ onCodeScanned, onStopCamera }: CameraViewProps): React.JSX
                 }));
                 
                 // First, check for Console login challenge (most common case)
-                // Try edge-proxy first (ESLite persistence), then Pages
+                // Use the configured per-environment edge node
                 try {
-                  // Check eStream edge-proxy for pending login challenges
-                  // All eStream-based services should post challenges to edge.estream.dev
-                  const serviceUrls = [
-                    // Primary: eStream edge-proxy (has ESLite persistence)
-                    'https://edge.estream.dev',
-                  ];
+                  // Get edge URL from SDK network config (per-environment)
+                  const sparkLatticeUrl = networkConfig.getEndpoints().sparkLatticeUrl;
+                  console.log('[Spark] Using sparkLatticeUrl from SDK:', sparkLatticeUrl);
+                  
+                  const serviceUrls = [sparkLatticeUrl];
                   
                   let challenges: SparkAuthChallenge[] = [];
                   let consoleUrl = serviceUrls[0];

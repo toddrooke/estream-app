@@ -31,6 +31,7 @@ import {
   resetNativeScanner,
 } from '@/services/nativeSparkScanner';
 import { authenticateWithSpark, SparkAuthChallenge, SparkAuthChallengeRaw, normalizeChallenge } from '@/services/sparkAuth';
+import { networkConfig } from '@estream/react-native';
 
 // ============================================================================
 // Types
@@ -249,7 +250,9 @@ function ScannerView({ onComplete, onCancel }: {
 
   const handleSparkDetected = async () => {
     try {
-      const serviceUrls = ['https://edge.estream.dev'];
+      // Use configured endpoint for current environment
+      const sparkLatticeUrl = networkConfig.getEndpoints().sparkLatticeUrl;
+      const serviceUrls = [sparkLatticeUrl];
       let challenges: SparkAuthChallenge[] = [];
       let consoleUrl = serviceUrls[0];
       

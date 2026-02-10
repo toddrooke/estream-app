@@ -155,7 +155,7 @@ export function getExpectedPosition(params: ParticleParams, elapsedMs: number): 
  */
 export async function resolveSparkCode(
   code: string,
-  serverUrl: string = 'https://console.estream.dev'
+  serverUrl: string = 'https://edge.estream.dev'
 ): Promise<SparkResolution | null> {
   try {
     const response = await fetch(`${serverUrl}/spark/${code}`);
@@ -263,7 +263,7 @@ export async function completeDeviceRegistration(
   resolution: SparkResolution,
   devicePubkey: string,
   deviceName?: string,
-  serverUrl: string = 'https://console.estream.dev'
+  serverUrl: string = 'https://edge.estream.dev'
 ): Promise<{ success: boolean; deviceId?: string; error?: string }> {
   try {
     const response = await fetch(`${serverUrl}/api/devices/register`, {

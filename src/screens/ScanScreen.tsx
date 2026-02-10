@@ -752,8 +752,8 @@ export default function ScanScreen(): React.JSX.Element {
       // Get device public key (in production, use ML-DSA-87 from vault)
       const devicePubkey = 'seeker-device-' + Date.now().toString(36);
       
-      // Call Mission Control to complete registration
-      const response = await fetch('https://console.estream.dev/api/devices/complete', {
+      // Call edge-proxy to complete registration
+      const response = await fetch('https://edge.estream.dev/api/devices/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
